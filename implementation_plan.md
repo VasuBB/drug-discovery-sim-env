@@ -548,3 +548,79 @@ python scripts/train_admet_models.py --evaluate  # Print AUROC/RMSE per model
 4. **Stochastic transitions** — noise on affinity (σ=0.3), reaction failures (10–15%) — prevent the agent from memorizing deterministic paths.
 
 5. **Sub-agents are rule-based, not LLM** — keeps complexity manageable, only Project Lead is trained.
+
+-----------------------------------------------------------------------------------
+
+## Perfected Implementation Plan: Advanced Drug Discovery RL Environment (v1)
+
+### Summary
+- Build a production-grade OpenEnv-compatible RL environment with three runtime dataset modes: `live_only`, `local_only`, and `hybrid`.
+- Keep the 8-tool structure, but upgrade each tool with realistic biological/chemical constraints, pathway-topology effects, uncertainty, and experiment economics.
+- Replace pure TF-IDF-only literature scoring with a hybrid retriever (`dense + BM25 + reranker`) while preserving lexical fallback for robustness and speed.
+- Centralize all constants/configuration in one source of truth to eliminate hardcoded values.
+- Deliver in two tracks: `demo-ready local` first, then `GRPO training/eval`.
+
+### Implementation Changes (Decision-Complete)
+- **Configuration and constants (single source of truth)**  
+  - Add `drug_discovery_env/config/settings.py` with typed config (`pydantic-settings`) and enums.  
+  - Add `config/defaults.yaml` and optional `config/overrides/*.yaml`.  
+  - All tool costs, thresholds, reward weights, stochastic noise, stage gates, dataset endpoints/paths, retrieval weights, and model params must be loaded from settings only.  
+  - Enforce `no magic numbers` in CI via a lightweight lint rule and config access wrappers.
+- **Dataset source strategy (required 3-way selection)**  
+  - Implement `DataSourceMode = {LIVE_ONLY, LOCAL_ONLY, HYBRID}`.  
+  - Add `data_provider/` abstraction with adapters for Open Targets/ChEMBL/PubMed(TBD endpoint) and local snapshot loaders.  
+  - In `HYBRID`, attempt live fetch with timeout/retry/circuit-breaker, then fallback to local snapshot; include provenance in observations (`source=live|local`, timestamp, confidence).  
+  - Add offline snapshot preparation/versioning scripts with schema checks and checksum manifests.
+- **Advanced state/action/environment design (real-world topology included)**  
+  - Extend state to include: target class, pathway graph context, disease-mechanism nodes, off-target risk profile, assay confidence, uncertainty estimates, and experiment queue.  
+  - Keep 8 actions but enrich params and outcomes: assay selection, evidence weighting, mechanism-aware hit triage, synthesis route feasibility, and selective validation panel design.  
+  - Add topology-aware transitions: action impact propagates through pathway neighborhood (primary target + related nodes + compensatory pathways).  
+  - Add realistic non-determinism: assay noise by assay type, batch effect multipliers, route-specific synthesis failure, and evidence-confidence decay.  
+  - Add budget model with fixed + variable costs, opportunity cost, and late-stage penalty for redundant low-information experiments.
+- **Literature retrieval and reasoning quality**  
+  - Implement hybrid retrieval pipeline: dense embeddings index + BM25 lexical retrieval + cross-encoder/light reranker.  
+  - Keep TF-IDF/BM25 fallback path for low-resource/offline mode; auto-select via config flag and resource checks.  
+  - Add evidence-grounding output contract: each literature-derived claim must map to retrieved snippet ids/confidence.  
+  - Use retrieval outputs to influence action priors and reward for evidence-consistent decisions.
+- **Reward system (advanced and aligned with real constraints)**  
+  - Maintain 4-part reward decomposition but upgrade signals:  
+  - Terminal reward: potency/selectivity/safety/synthesizability/novelty/developability with hard clinical safety floors.  
+  - Process reward: information gain per credit, stage-appropriate sequencing, uncertainty reduction, and avoiding confirmation bias loops.  
+  - Reasoning reward: evidence-grounded rationale, explicit tradeoff handling, and uncertainty-aware justification.  
+  - Strategy reward: campaign coherence, topology-aware exploration, and recovery after failed experiments.  
+  - Normalize all components and enforce calibrated weight ranges via config; include reward diagnostics in every episode summary.
+- **Public interfaces/types (explicit contracts)**  
+  - `DrugDiscoveryAction` includes `tool`, `params`, `reasoning`, and optional cited evidence ids.  
+  - `DrugDiscoveryObservation` includes state summary, tool result, provenance, uncertainty, sub-agent messages, and reward breakdown.  
+  - `GameState` includes topology, evidence ledger, assay history, budget ledger, and best-candidate frontier.  
+  - `SearchLiteratureResult` includes ranked docs, method used, and grounding metadata.
+- **Sub-agents and oversight upgrades**  
+  - Toxicologist: mechanism-linked alerts (hERG + pathway-mediated risk cues).  
+  - Chemist: SAR + route-feasibility + scaffold exploration pressure.  
+  - Budget manager: ROI and experiment-value forecasting.  
+  - Oversight: detect repeated low-information loops and unsafe acceleration to validation.
+- **Delivery sequence (implementation order)**  
+  - Step 1: config backbone + constants migration.  
+  - Step 2: data provider + 3-mode sourcing + local snapshots.  
+  - Step 3: core state/stage/action upgrades with topology hooks.  
+  - Step 4: literature hybrid retriever + grounding.  
+  - Step 5: reward upgrades + diagnostics.  
+  - Step 6: sub-agent upgrades + oversight.  
+  - Step 7: OpenEnv integration hardening + local rollout runner.  
+  - Step 8: GRPO training/evaluation scripts and benchmark report.
+
+### Test Plan
+- Unit tests for config loading, constant coverage, and mode switching (`live_only/local_only/hybrid`).
+- Contract tests for every tool input/output schema and provenance fields.
+- Deterministic-seed simulation tests for stage progression, budget accounting, and stochastic bounds.
+- Literature tests comparing retrieval quality across TF-IDF fallback vs hybrid retriever on labeled query-doc pairs.
+- Reward tests for hard floors, normalization, and component attribution correctness.
+- End-to-end rollouts (50-step) in all three data modes with pass/fail gates on completion, safety floor compliance, and budget efficiency.
+- Regression benchmark suite: untrained vs trained model metrics with confidence intervals.
+
+### Assumptions and Defaults
+- Runtime must support offline execution; `local_only` is always available if snapshots exist.
+- Default mode is `hybrid`, with per-run override via env var/CLI/config.
+- Default literature mode is `hybrid dense+BM25+rerank`; fallback to lexical when embedding stack unavailable.
+- Existing 8-tool action surface is retained for hackathon compatibility; sophistication is added through richer parameters and transition logic, not by changing tool names.
+- All numerical values and thresholds are configurable from the centralized settings system only.
