@@ -1,0 +1,20 @@
+[
+  {
+    "id": "pmid_1001",
+    "title": "INSR signaling modulation in type 2 diabetes",
+    "abstract": "INSR and PI3K pathway modulation improves glucose uptake while balancing safety in cardiometabolic risk models.",
+    "year": 2024
+  },
+  {
+    "id": "pmid_1002",
+    "title": "Kinase selectivity patterns and off-target toxicity",
+    "abstract": "Selectivity profiling across pathway neighbors reduces adverse events and improves translational confidence.",
+    "year": 2023
+  },
+  {
+    "id": "pmid_1003",
+    "title": "ADMET-aware lead optimization with uncertainty calibration",
+    "abstract": "Integrating uncertainty and ADMET priors can improve early-stage medicinal chemistry decisions.",
+    "year": 2025
+  }
+]
