@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 
+from drug_discovery_env.chemistry import RDKitLab
 from drug_discovery_env.config.settings import Settings
 from drug_discovery_env.core.state import CompoundRecord, GameState
 from drug_discovery_env.tools.base import Tool
@@ -10,17 +11,21 @@ from drug_discovery_env.tools.base import Tool
 class ModifyMoleculeTool(Tool):
     name = "modify_molecule"
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, lab: RDKitLab | None = None) -> None:
         self.settings = settings
+        self.lab = lab or RDKitLab()
 
     def execute(self, state: GameState, params: dict[str, object]) -> dict[str, object]:
         smiles = str(params.get("smiles", ""))
         strategy = str(params.get("strategy", "polarity_tune"))
+        instruction = str(params.get("instruction", strategy))
         if smiles not in state.compound_ledger:
             raise ValueError("Unknown compound")
 
         rec = state.compound_ledger[smiles]
-        new_smiles = f"{smiles}.M{random.randint(1, 9)}"
+        new_smiles = self.lab.modify_molecule(smiles, instruction)["smiles"]
+        if new_smiles == smiles:
+            new_smiles = f"{smiles}.M{random.randint(1, 9)}"
         new_rec = CompoundRecord(
             smiles=new_smiles,
             potency=max(0.0, min(1.0, rec.potency + random.uniform(-0.05, 0.12))),

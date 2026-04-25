@@ -38,7 +38,18 @@ class RewardBreakdown(BaseModel):
     process: float
     reasoning: float
     strategy: float
+    oversight_penalty: float = 0.0
     total: float
+
+    def to_dict(self) -> dict[str, float]:
+        return {
+            "terminal": self.terminal,
+            "process": self.process,
+            "reasoning": self.reasoning,
+            "strategy": self.strategy,
+            "oversight_penalty": self.oversight_penalty,
+            "total": self.total,
+        }
 
 
 class DrugDiscoveryObservation(Observation):
