@@ -1,0 +1,24 @@
+name: tests
+
+on:
+  push:
+    branches: [main, optimal-approach]
+  pull_request:
+    branches: [main]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install -U pip wheel
+          # install runtime deps without OpenEnv / RDKit / TRL — the compat shim
+          # and rdkit-fallback paths cover their absence in CI.
+          pip install pydantic pydantic-settings PyYAML requests fastapi pytest matplotlib
+      - name: Run pytest
+        run: pytest -q

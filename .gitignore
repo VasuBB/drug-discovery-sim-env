@@ -1,7 +1,42 @@
-data/
-.venv/
-tests/
-test/
-__pycache__
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
 .pytest_cache/
-drug_discovery_sim_env.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Build / dist
+build/
+dist/
+*.egg
+
+# Logs & outputs
+outputs/
+logs/
+wandb/
+runs/
+
+# Trained checkpoints — never commit weights or tokenizer dumps
+**/checkpoint-*/
+*.safetensors
+*.bin
+*.pt
+*.pth
+adapter_model*
+
+# Local data caches
+.cache/

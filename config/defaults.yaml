@@ -1,0 +1,110 @@
+app:
+  env_name: "drug_discovery_advanced"
+  max_steps: 50
+  random_seed: 42
+
+data:
+  mode: "hybrid"
+  local_data_dir: "drug_discovery_env/data"
+  request_timeout_seconds: 6.0
+  retries: 2
+  circuit_breaker_failures: 3
+  cache_ttl_seconds: 3600
+  user_agent: "drug-discovery-sim-env/0.1"
+  pubmed_tool: "drug_discovery_rl_env"
+  pubmed_email: "devnull@example.com"
+  min_pubmed_token_overlap: 2
+  endpoints:
+    open_targets_url: "https://api.platform.opentargets.org/api/v4/graphql"
+    chembl_url: "https://www.ebi.ac.uk/chembl/api/data"
+    pubmed_esearch_url: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+    pubmed_efetch_url: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+
+tools:
+  costs:
+    select_target: 5.0
+    search_compounds: 5.0
+    predict_affinity: 20.0
+    evaluate_admet: 10.0
+    modify_molecule: 15.0
+    synthesize: 25.0
+    validate_compound: 80.0
+    search_literature: 5.0
+    advance_stage: 0.0
+    abandon_compound: 0.0
+    pause_and_review_all: 0.0
+    delegate_to_subagent: 0.0
+    request_subagent_summary: 0.0
+  assay_noise:
+    biochemical: 0.15
+    cell_based: 0.22
+    docking: 0.18
+  synthesis_failure_base: 0.12
+  batch_effect_multiplier: 0.1
+  evidence_confidence_decay: 0.03
+
+transitions:
+  stage_gates:
+    stage_2_min_hits: 1
+    stage_3_min_optimized: 1
+    stage_4_min_admet: 1
+  topology:
+    neighborhood_hops: 2
+    compensation_factor: 0.2
+    risk_propagation_factor: 0.15
+
+budget:
+  initial_credits: 1000.0
+  opportunity_cost_factor: 0.03
+  late_stage_redundancy_penalty: 0.08
+  variable_cost_multipliers:
+    low_information: 1.2
+    high_uncertainty: 1.1
+    topology_complexity: 1.15
+
+retrieval:
+  mode: "hybrid"
+  top_k: 5
+  bm25_weight: 0.35
+  dense_weight: 0.45
+  rerank_weight: 0.20
+  fallback_min_docs: 3
+  dense_model_name: "sentence-transformers/all-MiniLM-L6-v2"
+  reranker_model_name: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  use_transformer_models: false
+
+reward:
+  weights:
+    terminal: 0.40
+    stage_progression: 0.15
+    budget_efficiency: 0.10
+    reasoning_depth: 0.15
+    process: 0.10
+    strategy: 0.05
+    oversight_penalty: 0.05
+  floors:
+    herg_prob_max: 0.5
+    pains_alert_max: 1
+  terminal_components:
+    potency: 0.22
+    selectivity: 0.18
+    safety: 0.22
+    synthesizability: 0.12
+    novelty: 0.12
+    developability: 0.14
+
+agents:
+  toxicologist_alert_threshold: 0.6
+  oversight_loop_window: 8
+  oversight_low_info_threshold: 0.4
+
+training:
+  model_name: "Qwen/Qwen2.5-3B-Instruct"
+  learning_rate: 5e-6
+  group_size: 8
+  lora_rank: 16
+  iterations: 500
+  max_completion_length: 512
+  warmup_ratio: 0.05
+  kl_penalty_beta: 0.04
+  clip_epsilon: 0.20
