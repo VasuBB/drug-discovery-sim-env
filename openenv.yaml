@@ -1,0 +1,11 @@
+name: drug_discovery_sim_env
+version: "0.1.0"
+description: >
+  A 50-step simulated drug discovery campaign environment for training LLM agents
+  with GRPO. Combines long-horizon planning, multi-agent interactions
+  (Project Lead + 4 rule-based sub-agents), and tool-use world modeling over
+  RDKit-backed cheminformatics simulators. Composable rubric reward.
+entrypoint: server.app:app
+hardware:
+  cpu: 2
+  memory_mb: 16384

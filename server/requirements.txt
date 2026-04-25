@@ -1,0 +1,12 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.5
+rdkit>=2023.9.5
+openenv>=0.1.0
+openenv_core
+
+# PyTorch with CUDA 12.8 support (RTX 3050 / driver 581+)
+# Install with: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+torch>=2.11.0
+torchvision
+torchaudio
