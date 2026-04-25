@@ -1,1 +1,7 @@
 data/
+.venv/
+tests/
+test/
+__pycache__
+.pytest_cache/
+drug_discovery_sim_env.egg-info/
