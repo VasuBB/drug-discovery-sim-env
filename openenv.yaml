@@ -1,0 +1,6 @@
+spec_version: 1
+name: drug-discovery-sim-env
+type: space
+runtime: fastapi
+app: drug_discovery_env.server.app:app
+port: 8099

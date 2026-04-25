@@ -1,11 +1,31 @@
 from __future__ import annotations
 
+import argparse
+
+from drug_discovery_env.config.settings import DataSourceMode, get_settings
 from drug_discovery_env.server.environment import DrugDiscoveryEnv
 
 
+def _mode(value: str) -> DataSourceMode:
+    return DataSourceMode(value)
+
+
 def main() -> None:
-    env = DrugDiscoveryEnv()
-    obs = env.reset("Type 2 Diabetes")
+    parser = argparse.ArgumentParser(description="Run one local rollout")
+    parser.add_argument("--disease", type=str, default="Type 2 Diabetes")
+    parser.add_argument(
+        "--data-mode",
+        type=_mode,
+        choices=list(DataSourceMode),
+        default=DataSourceMode.HYBRID,
+        help="Data source mode",
+    )
+    args = parser.parse_args()
+
+    settings = get_settings().model_copy(deep=True)
+    settings.data.mode = args.data_mode
+    env = DrugDiscoveryEnv(settings=settings)
+    obs = env.reset(args.disease)
     print("RESET:", obs.state_summary)
 
     scripted_actions = [
@@ -21,7 +41,11 @@ def main() -> None:
                 break
 
     if not obs.done:
-        any_smiles = next(iter(env.state.compound_ledger.keys()))
+        game_state = getattr(env, "_game_state", None)
+        if game_state is None or not game_state.compound_ledger:
+            print("FINAL:", obs.state_summary)
+            return
+        any_smiles = next(iter(game_state.compound_ledger.keys()))
         followups = [
             f"<reasoning>Estimate potency with biochemical assay and known uncertainty.</reasoning><tool>predict_affinity</tool><params>{{\"smiles\":\"{any_smiles}\",\"assay_type\":\"biochemical\"}}</params>",
             f"<reasoning>Evaluate ADMET before costly validation.</reasoning><tool>evaluate_admet</tool><params>{{\"smiles\":\"{any_smiles}\"}}</params>",

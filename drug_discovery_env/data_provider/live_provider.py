@@ -204,6 +204,11 @@ class LiveAPIProvider(DataProvider):
             )
         return docs
 
+    @staticmethod
+    def _tokenize(text: str) -> set[str]:
+        cleaned = "".join(ch.lower() if ch.isalnum() else " " for ch in text)
+        return {tok for tok in cleaned.split() if len(tok) >= 4}
+
     def search_literature(self, query: str) -> list[dict[str, Any]]:
         base_params = {
             "db": "pubmed",
@@ -231,4 +236,19 @@ class LiveAPIProvider(DataProvider):
         if not ids:
             return []
         xml_payload = self._pubmed_fetch_xml(ids[:10])
-        return self._parse_pubmed_xml(xml_payload)
+        docs = self._parse_pubmed_xml(xml_payload)
+        q_tokens = self._tokenize(query)
+        min_overlap = self.settings.data.min_pubmed_token_overlap
+        scored: list[tuple[int, dict[str, Any]]] = []
+        for doc in docs:
+            text = f"{doc.get('title', '')} {doc.get('abstract', '')}"
+            d_tokens = self._tokenize(text)
+            overlap = len(q_tokens.intersection(d_tokens))
+            if overlap >= min_overlap:
+                row = dict(doc)
+                row["score"] = max(float(doc.get("score", 0.0)), min(1.0, overlap / 10.0))
+                scored.append((overlap, row))
+        if not scored:
+            return docs[:10]
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [row for _, row in scored[:10]]

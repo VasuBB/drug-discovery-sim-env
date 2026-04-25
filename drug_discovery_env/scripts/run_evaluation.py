@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import argparse
 from statistics import mean
 
+from drug_discovery_env.config.settings import DataSourceMode, get_settings
 from drug_discovery_env.server.environment import DrugDiscoveryEnv
 
 
@@ -24,23 +26,42 @@ def run_episode(env: DrugDiscoveryEnv) -> dict[str, float]:
     done = False
     rewards: list[float] = []
     while not done:
-        smiles = next(iter(env.state.compound_ledger.keys()), None) if env.state else None
-        action = scripted_policy(env.state.step if env.state else 0, smiles)
+        game_state = getattr(env, "_game_state", None)
+        smiles = next(iter(game_state.compound_ledger.keys()), None) if game_state else None
+        step_idx = game_state.step if game_state else 0
+        action = scripted_policy(step_idx, smiles)
         obs = env.step(action)
         rewards.append(obs.reward_breakdown.total if obs.reward_breakdown else 0.0)
         done = obs.done
     return {
         "total_reward": sum(rewards),
         "mean_step_reward": mean(rewards) if rewards else 0.0,
-        "final_budget": env.state.budget_remaining if env.state else 0.0,
-        "final_stage": env.state.stage if env.state else 0,
+        "final_budget": game_state.budget_remaining if game_state else 0.0,
+        "final_stage": game_state.stage if game_state else 0,
     }
 
 
+def _mode(value: str) -> DataSourceMode:
+    return DataSourceMode(value)
+
+
 def main() -> None:
-    env = DrugDiscoveryEnv()
-    metrics = [run_episode(env) for _ in range(5)]
-    print("Evaluation summary over 5 episodes")
+    parser = argparse.ArgumentParser(description="Run evaluation rollouts")
+    parser.add_argument("--episodes", type=int, default=5)
+    parser.add_argument(
+        "--data-mode",
+        type=_mode,
+        choices=list(DataSourceMode),
+        default=DataSourceMode.HYBRID,
+        help="Data source mode",
+    )
+    args = parser.parse_args()
+
+    settings = get_settings().model_copy(deep=True)
+    settings.data.mode = args.data_mode
+    env = DrugDiscoveryEnv(settings=settings)
+    metrics = [run_episode(env) for _ in range(args.episodes)]
+    print(f"Evaluation summary over {args.episodes} episodes")
     print("mean_total_reward", mean(m["total_reward"] for m in metrics))
     print("mean_step_reward", mean(m["mean_step_reward"] for m in metrics))
     print("mean_final_budget", mean(m["final_budget"] for m in metrics))

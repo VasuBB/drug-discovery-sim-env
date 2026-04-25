@@ -45,6 +45,7 @@ class DataConfig(BaseModel):
     user_agent: str
     pubmed_tool: str
     pubmed_email: str
+    min_pubmed_token_overlap: int
     endpoints: EndpointConfig
 
 

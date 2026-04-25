@@ -1,15 +1,38 @@
 from __future__ import annotations
 
-from drug_discovery_env.core.models import DrugDiscoveryAction, DrugDiscoveryObservation
-from drug_discovery_env.server.environment import DrugDiscoveryEnv
+from typing import Any
+
+from drug_discovery_env.openenv_compat import EnvClient
+try:
+    from openenv.core.client_types import StepResult
+except Exception:  # pragma: no cover - legacy path
+    from openenv_core.client_types import StepResult
+
+from drug_discovery_env.core.models import DrugDiscoveryAction, DrugDiscoveryObservation, DrugDiscoveryState
 
 
-class DrugDiscoveryClient:
-    def __init__(self, env: DrugDiscoveryEnv | None = None) -> None:
-        self.env = env or DrugDiscoveryEnv()
+class DrugDiscoveryClient(EnvClient[DrugDiscoveryAction, DrugDiscoveryObservation, DrugDiscoveryState]):
+    """Typed OpenEnv client for the drug discovery environment.
 
-    def reset(self, disease: str = "Type 2 Diabetes") -> DrugDiscoveryObservation:
-        return self.env.reset(disease=disease)
+    This client talks to a running server over WebSocket/HTTP and does not import
+    server internals, preserving client/server separation.
+    """
 
-    def step(self, action: DrugDiscoveryAction | str) -> DrugDiscoveryObservation:
-        return self.env.step(action)
+    def _step_payload(self, action: DrugDiscoveryAction) -> dict[str, Any]:
+        return action.model_dump()
+
+    def _parse_result(self, payload: dict[str, Any]) -> StepResult[DrugDiscoveryObservation]:
+        obs_payload = payload.get("observation", {})
+        observation = DrugDiscoveryObservation.model_validate(obs_payload)
+        return StepResult(
+            observation=observation,
+            reward=payload.get("reward", observation.reward),
+            done=payload.get("done", observation.done),
+        )
+
+    def _parse_state(self, payload: dict[str, Any]) -> DrugDiscoveryState:
+        return DrugDiscoveryState.model_validate(payload)
+
+
+def create_sync_client(base_url: str):
+    return DrugDiscoveryClient(base_url=base_url).sync()
