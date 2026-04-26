@@ -54,16 +54,38 @@ def run_episode(
     *,
     disease: str,
     choose_action: Callable[[DrugDiscoveryObservation], str | DrugDiscoveryAction],
+    verbose: bool = False,
+    episode_index: int = 1,
+    total_episodes: int = 1,
 ) -> EpisodeSummary:
     observation = env.reset(disease=disease)
     done = False
     rewards: list[float] = []
+    if verbose:
+        print(
+            f"[episode {episode_index}/{total_episodes}] start disease={disease} stage={observation.stage}",
+            flush=True,
+        )
     while not done:
         action = choose_action(observation)
         observation = env.step(action)
-        rewards.append(observation.reward_breakdown.total if observation.reward_breakdown else float(observation.reward or 0.0))
+        step_reward = observation.reward_breakdown.total if observation.reward_breakdown else float(observation.reward or 0.0)
+        rewards.append(step_reward)
+        if verbose:
+            print(
+                f"[episode {episode_index}/{total_episodes}] step={observation.step_index} "
+                f"stage={observation.stage} tool={observation.last_tool} reward={step_reward:.4f} "
+                f"done={observation.done}",
+                flush=True,
+            )
         done = observation.done
     state = env.state
+    if verbose:
+        print(
+            f"[episode {episode_index}/{total_episodes}] done total_reward={sum(rewards):.4f} "
+            f"budget={state.budget_remaining:.2f} terminated={state.terminated_reason}",
+            flush=True,
+        )
     return EpisodeSummary(
         total_reward=sum(rewards),
         mean_step_reward=mean(rewards) if rewards else 0.0,
@@ -79,5 +101,16 @@ def evaluate_in_process(
     disease: str,
     episodes: int,
     choose_action: Callable[[DrugDiscoveryObservation], str | DrugDiscoveryAction],
+    verbose: bool = False,
 ) -> list[EpisodeSummary]:
-    return [run_episode(env, disease=disease, choose_action=choose_action) for _ in range(episodes)]
+    return [
+        run_episode(
+            env,
+            disease=disease,
+            choose_action=choose_action,
+            verbose=verbose,
+            episode_index=index + 1,
+            total_episodes=episodes,
+        )
+        for index in range(episodes)
+    ]

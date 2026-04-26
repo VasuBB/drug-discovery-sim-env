@@ -19,6 +19,7 @@ def main() -> None:
     parser.add_argument("--model", type=str, default=None, help="Model name or checkpoint path for --policy model")
     parser.add_argument("--device", choices=["auto", "cpu", "mps", "cuda"], default="auto")
     parser.add_argument("--max-new-tokens", type=int, default=256)
+    parser.add_argument("--verbose", action="store_true", help="Print per-episode and per-step progress")
     args = parser.parse_args()
 
     settings = get_settings().model_copy(deep=True)
@@ -44,6 +45,7 @@ def main() -> None:
         disease=args.disease,
         episodes=args.episodes,
         choose_action=chooser,
+        verbose=args.verbose,
     )
     print(f"Evaluation summary over {args.episodes} episodes")
     print("policy", args.policy)

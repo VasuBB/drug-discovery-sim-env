@@ -1,18 +1,15 @@
-"""GRPO orchestration — dry-run + offline-dataset path used by run_training_experiment.
-
-For *live-rollout* GRPO against a running env, see scripts/train_grpo_live.py.
-This module is the offline path: generate heuristic rollouts, build a TRL
-dataset where the reward column is the env's *actual* terminal reward (not a
-keyword-counter), and either return a dry-run report or kick off TRL.
-"""
+"""GRPO orchestration for local rollouts and offline readiness checks."""
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence
 
-from drug_discovery_env.config.settings import DataSourceMode
+from drug_discovery_env.config.settings import DataSourceMode, Settings, get_settings
+from drug_discovery_env.server.environment import DrugDiscoveryEnv
 from drug_discovery_env.training.config import training_config
+from drug_discovery_env.training.model_policy import action_from_text
 from drug_discovery_env.training.rollout_generator import generate_rollouts
 
 
@@ -58,24 +55,76 @@ def _build_training_dataset(
             "prompt": s.prompt,
             "completion": s.completion,
             "reward": float(s.reward),
+            "disease": s.disease,
+            "history": list(s.history),
         }
         for s in samples
     ]
     return Dataset.from_list(rows), samples
 
 
-def _make_env_grounded_reward_func(samples_by_prompt: Dict[str, float]):
-    """Reward function bound to the env's reward, not a keyword counter.
+def _restore_env_before_step(
+    history: Sequence[str],
+    *,
+    disease: str,
+    settings: Settings,
+    snapshot_cache: Dict[tuple[str, tuple[str, ...]], tuple[Any, str | None]],
+) -> DrugDiscoveryEnv:
+    key = (disease, tuple(history))
+    if key not in snapshot_cache:
+        env = DrugDiscoveryEnv(settings=settings)
+        env.reset(disease=disease)
+        for prior_action in history:
+            env.step(action_from_text(prior_action))
+        snapshot_cache[key] = (deepcopy(env._game_state), env._episode_id)
 
-    During offline GRPO we don't have the env in the loop, so we look up the
-    env's reward by prompt-string match and hand it back unchanged. This keeps
-    the reward signal aligned with what the agent will actually be evaluated on.
-    """
+    state_snapshot, episode_id = snapshot_cache[key]
+    restored = DrugDiscoveryEnv(settings=settings)
+    restored._game_state = deepcopy(state_snapshot)
+    restored._episode_id = episode_id
+    return restored
 
-    def reward_func(completions, prompts=None, **kwargs):  # noqa: ARG001
-        if prompts is None:
+
+def _make_replay_reward_func(settings: Settings):
+    snapshot_cache: Dict[tuple[str, tuple[str, ...]], tuple[Any, str | None]] = {}
+
+    def reward_func(
+        completions,
+        prompts=None,  # noqa: ARG001
+        disease=None,
+        history=None,
+        log_metric=None,
+        **kwargs,  # noqa: ARG001
+    ):
+        if disease is None or history is None:
             return [0.0 for _ in completions]
-        return [float(samples_by_prompt.get(str(p), 0.0)) for p in prompts]
+
+        rewards: list[float] = []
+        for completion, sample_disease, sample_history in zip(completions, disease, history, strict=True):
+            try:
+                env = _restore_env_before_step(
+                    list(sample_history),
+                    disease=str(sample_disease),
+                    settings=settings,
+                    snapshot_cache=snapshot_cache,
+                )
+                pre_breakdown = env.reward_engine.compute(env._ensure_state(), terminal=False)
+                observation = env.step(action_from_text(str(completion)))
+                post_total = (
+                    float(observation.reward_breakdown.total)
+                    if observation.reward_breakdown is not None
+                    else float(observation.reward or 0.0)
+                )
+                shaped = post_total - float(pre_breakdown.total)
+                if observation.done and observation.reward is not None:
+                    shaped += float(observation.reward)
+            except Exception:
+                shaped = 0.0
+            rewards.append(shaped)
+
+        if callable(log_metric) and rewards:
+            log_metric("env_reward/replay_mean", sum(rewards) / len(rewards))
+        return rewards
 
     return reward_func
 
@@ -124,12 +173,13 @@ def run_grpo_if_available(
 
     try:
         from trl import GRPOConfig, GRPOTrainer
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from transformers import AutoTokenizer
     except Exception as exc:
         base["status"] = "trl_missing_components"
         base["message"] = f"TRL available but GRPO components missing: {exc}"
         return base
 
+    import inspect
     import torch
 
     requested = device.lower()
@@ -146,18 +196,18 @@ def run_grpo_if_available(
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    _ = AutoModelForCausalLM  # validate import
+    tokenizer.padding_side = "left"
 
-    samples_by_prompt = {s.prompt: s.reward for s in samples}
-    reward_func = _make_env_grounded_reward_func(samples_by_prompt)
+    env_settings = get_settings().model_copy(deep=True)
+    env_settings.data.mode = DataSourceMode.LIVE_ONLY
+    reward_func = _make_replay_reward_func(env_settings)
 
-    import inspect
-
-    num_generations = max(1, min(int(cfg["group_size"]), 2))
+    num_generations = max(2, min(int(cfg["group_size"]), 2))
     raw_cfg: Dict[str, Any] = {
         "output_dir": output_dir,
         "learning_rate": float(cfg["learning_rate"]),
-        "max_completion_length": int(cfg["max_completion_length"]),
+        "max_completion_length": min(int(cfg["max_completion_length"]), 256),
+        "max_prompt_length": 2048,
         "num_generations": num_generations,
         "generation_batch_size": num_generations,
         "per_device_train_batch_size": max(1, num_generations),
@@ -185,6 +235,8 @@ def run_grpo_if_available(
     )
 
     train_output = trainer.train()
+    trainer.save_model(output_dir)
+    tokenizer.save_pretrained(output_dir)
 
     base["status"] = "trl_trained"
     base["device"] = resolved_device
@@ -199,4 +251,6 @@ __all__: List[str] = [
     "TrainingRunReport",
     "run_grpo_if_available",
     "run_training_dry_run",
+    "_build_training_dataset",
+    "_make_replay_reward_func",
 ]
