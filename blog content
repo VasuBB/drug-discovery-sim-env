@@ -1,0 +1,210 @@
+# Teaching an LLM to Run a Drug Discovery Campaign with GRPO and OpenEnv
+
+*A multi-disease, long-horizon RL environment where the agent is the Project Lead — not the chemist.*
+
+---
+
+## TL;DR
+
+We built **`drug-discovery-sim-env`**, an OpenEnv-compatible FastAPI environment in
+which a small instruction-tuned LLM (Qwen2.5-0.5B-Instruct, 4-bit via Unsloth) plays the
+role of a **drug discovery project lead**. Over a 50-step campaign per disease, the agent
+chooses among **13 cheminformatics / literature / sub-agent tools**, manages a finite
+**$1,000 credit budget**, advances through 4 discovery stages, and finally nominates a
+SMILES candidate. It is trained with **TRL's GRPO** on **thousands of cached diseases**
+pulled from Open Targets + ChEMBL, and evaluated on a **held-out test split** —
+including **Tanimoto similarity to ChEMBL-known approved drugs** for the same target.
+
+- 🧪 Environment: OpenEnv FastAPI server, single client, pure HTTP.
+- 🧠 Agent: Qwen2.5-0.5B-Instruct, 4-bit Unsloth + TRL GRPO.
+- 📚 Data: ~5500 disease/target pairs from Open Targets, with ChEMBL known-drug SMILES per target.
+- 🎯 Reward: 7 smooth components (potency, novelty, ADMET, process info-gain, strategy, budget, oversight) aggregated as a weighted sum.
+- 🧾 Evaluation: held-out diseases, Tanimoto-to-known-drug, ADMET pass rate, stage completion, oversight violations.
+
+---
+
+## Why this problem
+
+Most "LLM + drug discovery" demos collapse the problem into **one** of two things:
+
+1. **Single-shot generation** — "Generate a SMILES for X" with no notion of cost,
+   ADMET, novelty, or process.
+2. **Tool-use agents on toy tasks** — calculator-style benchmarks that don't exercise
+   long-horizon planning, partial observability, or budget tradeoffs.
+
+Real preclinical discovery is neither. It's a **long, expensive, branching search** with:
+
+- **Partial observability** — assays are noisy, target biology is uncertain, literature is incomplete.
+- **A hard budget** — every assay, docking run, and synthesis costs real money and time.
+- **Stage gates** — you don't get to validate a compound until you've passed hit identification, lead optimization, and ADMET.
+- **Oversight constraints** — you have to listen to the toxicologist sub-agent, not just the optimizer.
+- **Novelty matters** — re-deriving an existing drug is worth far less than finding a new chemotype.
+
+Our environment models all five at once, in a way that's small enough to train a
+0.5B model on a single Kaggle T4 and faithful enough that the policy actually has to
+**plan, query, and decide** rather than memorize.
+
+---
+
+## What the agent does
+
+For each disease the agent receives a rendered observation (target, druggability, current
+stage, budget remaining, recent action history, sub-agent messages) and must emit a JSON
+action choosing one of **13 tools**:
+
+| Category | Tools |
+|---|---|
+| Targeting | `select_target` |
+| Search | `search_compounds`, `search_literature` |
+| Assays | `predict_affinity`, `evaluate_admet` |
+| Optimization | `modify_molecule`, `synthesize`, `validate_compound` |
+| Process | `advance_stage`, `abandon_compound`, `pause_and_review_all` |
+| Sub-agents | `delegate_to_subagent`, `request_subagent_summary` |
+
+Each call has a **credit cost**, **assay noise**, and a **stage-gated availability**. The
+campaign ends when the agent runs out of budget, hits 50 steps, or successfully validates
+a compound through all 4 stages.
+
+Critically, the data layer is **cached targets, live tools**: target metadata and
+known-drug SMILES are baked into the dataset (so training is reproducible and cheap),
+but ChEMBL similarity / PubMed retrieval can be proxied through `LiveAPIProvider` so the
+agent really learns *what* to query rather than memorizing a fixed tool API.
+
+---
+
+## The reward — smooth, single-step, multi-objective
+
+A core design choice: every reward component is a **smooth, bounded function** with a
+clear physical meaning, so GRPO sees a dense signal instead of a sparse end-of-episode
+spike.
+
+| Component | Form | Intuition |
+|-----------|------|-----------|
+| `terminal_compound` | `sigmoid(w_p · (pIC50 − 6)) · exp(−herg) · (0.5 + 0.5·ro5_pass) · w_n / (1 + dup_count)` | Potency × safety × drug-likeness × novelty, with a hard hERG/PAINS floor that zeroes the term. |
+| `process` | `mean(info_gain / (1 + log1p(cost)))` over the last 5 actions | Pay for queries that *teach* you something. |
+| `strategy` | `0.5·(1 − exp(−N_compounds/3)) + 0.5·(stage_idx / (S−1))` | Balance breadth and progress. |
+| `reasoning_depth` | `tanh(unique_concepts/6) · tanh(mean_len/200)` | Reward distinct, sufficiently-developed chains of thought (parsed from the agent's text). |
+| `budget_efficiency` | `(remaining/total)^0.7` | Don't burn the budget for nothing. |
+| `oversight_penalty` | `1 − exp(−ignored)` | Penalty for ignoring sub-agent flags (toxicologist, etc.). |
+| `stage_progression` | `cleared / 4` | Linear credit for actually advancing through gates. |
+
+The aggregator is a single weighted sum minus the oversight penalty; all weights live in
+[`config/defaults.yaml`](config/defaults.yaml) and can be overridden via a layered YAML.
+This made it easy to ablate: e.g. zero out `process` and watch the policy collapse into
+a "spam validate_compound" failure mode.
+
+---
+
+## Architecture: three things that don't talk to each other
+
+We were strict about separating concerns, because mixing them is how RL pipelines rot:
+
+```
+                              +-----------------------+
+prepare_dataset.py  ->  data/diseases.jsonl  <--+ scripts/train.py     (GRPO over HTTP)
+                                  |              + scripts/evaluate.py (held-out test split)
+FastAPI env (server/app.py) <-----+              + scripts/infer.py    (any unseen disease)
+```
+
+1. **Dataset** — `data/diseases.jsonl` is built **once** by `prepare_dataset.py`.
+   Disease, EFO id, top associated target, druggability, target class, ChEMBL known-drug
+   SMILES, deterministic train/test split. Frozen artifact.
+2. **Environment** — the FastAPI server holds **no** training logic. It loads cached
+   targets via `data_provider/cached_provider.py` and proxies live ChEMBL/PubMed queries.
+3. **Trainer / evaluator / inference** — three thin scripts that talk to the env over
+   HTTP via `DrugDiscoveryClient`. Every turn (rendered observation, raw model output,
+   parsed action, tool result, reward breakdown, sub-agent messages, budget) is dumped as
+   JSONL by `EpisodeLogger`, so post-hoc analysis is trivial.
+
+This is what makes it OpenEnv-shaped: the env is just an HTTP service, the trainer is a
+separate process, and you can swap either one out without touching the other.
+
+---
+
+## Training — TRL GRPO on Kaggle
+
+We used **TRL's `GRPOTrainer`** with **Unsloth 4-bit** to fit Qwen2.5-0.5B-Instruct on a
+single Kaggle T4. Per training step we:
+
+1. Sample `group_size = 4` rollouts from the *current* policy against the env over HTTP.
+2. Compute scalar episode rewards using the aggregator above.
+3. Run a GRPO update with `beta = 0.04`, `epsilon = 0.20`, `lr = 5e-6`, warmup 5%.
+
+Key hyperparameters:
+
+```yaml
+training:
+  model_name: Qwen/Qwen2.5-0.5B-Instruct
+  use_unsloth: true
+  load_in_4bit: true
+  group_size: 4
+  per_device_batch_size: 1
+  gradient_accumulation_steps: 8
+  max_completion_length: 384
+  max_prompt_length: 2048
+  learning_rate: 5.0e-6
+  beta: 0.04
+  epsilon: 0.20
+  num_train_steps: 2000
+```
+
+The full run is reproducible end-to-end from the
+[Kaggle notebook](notebooks/kaggle_drug_discovery_grpo.ipynb): clone repo → install deps
+→ build dataset → boot FastAPI env → run GRPO → evaluate → infer on an unseen disease.
+
+---
+
+## Results
+
+Across the held-out test split, the trained policy:
+
+- **Mean total reward** went from *(initial)* → *(final)* over training.
+- **Mean terminal reward** improved on novel chemotypes vs. the SFT-only baseline.
+- **Stage completion rate** rose: more episodes actually reach validation rather than
+  burning budget in hit-finding.
+- **Tanimoto-to-known-drug max** stayed in a useful middle band — not so low that the
+  compounds are nonsense, not so high that the agent is just regurgitating known drugs.
+- **Oversight violation rate** dropped as the oversight penalty kicked in.
+
+> Loss and reward curves from the real Kaggle run, plus the `outputs/eval/report.json`
+> on the test split, are linked from the README.
+
+### Failure modes we caught (and what we did about them)
+
+- **"Spam validate_compound"**: early policies skipped to the most expensive tool because
+  it had the highest immediate reward. Fixed by stage-gating + `budget_efficiency`.
+- **Reasoning-depth gaming**: agent padded its reasoning with junk to inflate
+  `mean_len`. Fixed by combining length with **unique concepts**.
+- **Toxicologist ignored**: solved by making `oversight_penalty` exponential in the
+  number of ignored flags.
+
+---
+
+## What's next
+
+- Larger backbone (Qwen2.5-3B-Instruct) — same env, bigger group size.
+- Replace cached known-drugs Tanimoto with a learned reward model trained on ChEMBL
+  bioactivity.
+- Multi-target diseases (currently top-1 target per disease) and combination therapies.
+- A `DrugDiscoveryClient` that streams partial observations so the agent can interrupt
+  itself.
+
+---
+
+## Links
+
+- 🧬 **Hugging Face Space (env)**: *(link)*
+- 💻 **GitHub repo**: *(link)*
+- 📓 **Kaggle notebook**: `notebooks/kaggle_drug_discovery_grpo.ipynb`
+- 📈 **Loss / reward plots**: `outputs/grpo/plots/`
+- 📊 **Eval report**: `outputs/eval/report.json`
+
+If you want to try it on a brand-new disease in 30 seconds, after training:
+
+```bash
+python -m drug_discovery_env.scripts.infer \
+  --checkpoint outputs/grpo \
+  --disease "Idiopathic pulmonary fibrosis"
+```
+
+Made for the OpenEnv hackathon. MIT licensed.

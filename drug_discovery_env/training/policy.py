@@ -70,7 +70,7 @@ class TransformersToolPolicy:
                 device_map="auto" if self.device == "cuda" else None,
             )
 
-        if self.device != "cuda" and getattr(self.model, "device", None) is None:
+        if self.device != "cuda":
             self.model = self.model.to(self.device)
 
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_ref)
@@ -93,8 +93,12 @@ class TransformersToolPolicy:
 
         prompt = self._prompt_for(observation)
         inputs = self.tokenizer(prompt, return_tensors="pt")
-        if self.device != "cuda":
-            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        if self.device == "cuda":
+            target_device = "cuda"
+        else:
+            model_device = getattr(self.model, "device", None)
+            target_device = str(model_device) if model_device is not None else self.device
+        inputs = {k: v.to(target_device) for k, v in inputs.items()}
 
         with torch.no_grad():
             outputs = self.model.generate(
