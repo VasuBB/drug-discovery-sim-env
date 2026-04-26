@@ -3,4 +3,56 @@ name: drug-discovery-sim-env
 type: space
 runtime: fastapi
 app: drug_discovery_env.server.app:app
-port: 8099
+port: 7860
+description: >
+  50-step simulated drug discovery RL environment. The agent (a "Project Lead" LLM)
+  drives a multi-stage campaign per disease — target_selection -> hit_id -> hit_to_lead
+  -> admet -> lead_validation -> finished — choosing among 13 cheminformatics,
+  literature, and sub-agent tools. Sparse terminal reward with optional process /
+  strategy / reasoning shaping.
+
+routes:
+  reset:  POST /reset
+  step:   POST /step
+  state:  GET  /state
+  close:  POST /close
+  health: GET  /health
+  docs:   GET  /docs
+
+action_schema:
+  python: drug_discovery_env.core.models:DrugDiscoveryAction
+observation_schema:
+  python: drug_discovery_env.core.models:DrugDiscoveryObservation
+state_schema:
+  python: drug_discovery_env.core.models:DrugDiscoveryState
+
+tools:
+  - select_target
+  - search_compounds
+  - predict_affinity
+  - evaluate_admet
+  - modify_molecule
+  - synthesize
+  - validate_compound
+  - search_literature
+  - advance_stage
+  - abandon_compound
+  - pause_and_review_all
+  - delegate_to_subagent
+  - request_subagent_summary
+
+reset_kwargs:
+  disease: string (required) — disease name to plan a campaign for
+  seed: int (optional)
+  episode_id: string (optional)
+  max_steps: int (optional, default 50)
+  budget: float (optional, default from config/defaults.yaml)
+
+tags:
+  - drug-discovery
+  - rl
+  - grpo
+  - openenv
+  - mcp
+  - rdkit
+  - chembl

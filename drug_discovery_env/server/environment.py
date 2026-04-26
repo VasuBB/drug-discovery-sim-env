@@ -61,9 +61,9 @@ from drug_discovery_env.tools import (
 class DrugDiscoveryEnv(Environment[DrugDiscoveryAction, DrugDiscoveryObservation, DrugDiscoveryState]):
     """50-step simulated drug discovery research campaign."""
 
-    SUPPORTS_CONCURRENT_SESSIONS = True
+    SUPPORTS_CONCURRENT_SESSIONS = False
 
-    def __init__(self, settings: Optional[Settings] = None) -> None:
+    def __init__(self, settings: Optional[Settings] = None, **_: Any) -> None:
         super().__init__()
         self.settings = settings or get_settings()
         self.lab = LabSimulator()

@@ -41,7 +41,11 @@ short_description: Multi-disease drug discovery RL environment (OpenEnv + GRPO)
    steps × 32 episodes ≈ 1,600 rollouts), evaluates on the held-out split, and
    downloads a single zip with all artefacts (plots + report + traces).
 2. Or hit the **HF Space** URL — the env server is already running and
-   responds to `/health`, `/reset`, `/step`, etc.
+   responds to `/health`, `/reset`, `/step`, `/state`, `/close`, `/docs`.
+3. To run the **Kaggle notebook against the live HF Space** (no local server),
+   set `USE_HF=1` in the environment (or in cell #2). Training, evaluation, and
+   inference will all hit `https://vasuboda-drug-discovery-sim-env.hf.space`
+   over HTTP — no function calls into the env, full client/server separation.
 
 ## 📊 Training evidence (from the real Kaggle run)
 
