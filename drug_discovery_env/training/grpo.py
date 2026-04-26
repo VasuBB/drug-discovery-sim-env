@@ -294,7 +294,27 @@ def _load_model_and_tokenizer(settings: Settings):
                 max_seq_length=cfg.max_prompt_length + cfg.max_completion_length,
                 load_in_4bit=cfg.load_in_4bit,
             )
-            FastLanguageModel.for_training(model)
+            # 4-bit (and 8-bit) base weights are frozen; HuggingFace Trainer refuses
+            # to fine-tune them directly. Attach LoRA adapters so GRPO updates the
+            # adapters while keeping the quantized base in place.
+            model = FastLanguageModel.get_peft_model(
+                model,
+                r=16,
+                lora_alpha=16,
+                lora_dropout=0.0,
+                bias="none",
+                target_modules=[
+                    "q_proj",
+                    "k_proj",
+                    "v_proj",
+                    "o_proj",
+                    "gate_proj",
+                    "up_proj",
+                    "down_proj",
+                ],
+                use_gradient_checkpointing="unsloth",
+                random_state=int(settings.dataset.seed),
+            )
         except Exception as exc:
             print(f"[warn] Unsloth unavailable ({exc}); falling back to plain HF.")
             use_unsloth = False
@@ -304,13 +324,50 @@ def _load_model_and_tokenizer(settings: Settings):
         tokenizer = AutoTokenizer.from_pretrained(cfg.model_name)
         device = _select_device()
         dtype = torch.float16 if device == "cuda" else torch.float32
-        model = AutoModelForCausalLM.from_pretrained(
-            cfg.model_name,
-            torch_dtype=dtype,
-            device_map="auto" if device == "cuda" else None,
-        )
+        load_kwargs: Dict[str, Any] = {"torch_dtype": dtype}
+        if device == "cuda":
+            load_kwargs["device_map"] = "auto"
+        if cfg.load_in_4bit and device == "cuda":
+            try:
+                from transformers import BitsAndBytesConfig
+
+                load_kwargs["quantization_config"] = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=dtype,
+                    bnb_4bit_use_double_quant=True,
+                    bnb_4bit_quant_type="nf4",
+                )
+            except Exception as exc:
+                print(f"[warn] 4-bit quantization unavailable ({exc}); using full precision.")
+        model = AutoModelForCausalLM.from_pretrained(cfg.model_name, **load_kwargs)
         if device != "cuda" and getattr(model, "device", None) is None:
             model = model.to(device)
+        if "quantization_config" in load_kwargs:
+            try:
+                from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+
+                model = prepare_model_for_kbit_training(model)
+                model = get_peft_model(
+                    model,
+                    LoraConfig(
+                        r=16,
+                        lora_alpha=16,
+                        lora_dropout=0.0,
+                        bias="none",
+                        task_type="CAUSAL_LM",
+                        target_modules=[
+                            "q_proj",
+                            "k_proj",
+                            "v_proj",
+                            "o_proj",
+                            "gate_proj",
+                            "up_proj",
+                            "down_proj",
+                        ],
+                    ),
+                )
+            except Exception as exc:
+                print(f"[warn] PEFT/LoRA wrap failed ({exc}); training full model.")
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     return model, tokenizer
