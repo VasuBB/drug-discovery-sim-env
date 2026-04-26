@@ -73,16 +73,59 @@ def _disease_from_prompt(prompt: Any) -> str:
     return ""
 
 
+def _generate_text(
+    trainer,
+    messages: List[Dict[str, Any]],
+    *,
+    max_new_tokens: int,
+    temperature: float,
+    top_p: float,
+    max_prompt_length: int,
+) -> str:
+    """Run one chat-style generation step using the trainer's live model.
+
+    We avoid TRL's private ``generate_rollout_completions`` helper because it
+    moves around between releases. ``trainer.model`` + ``trainer.processing_class``
+    are part of TRL's public surface and stable across versions.
+    """
+
+    tokenizer = trainer.processing_class
+    prompt_text = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+    encoded = tokenizer(
+        prompt_text,
+        return_tensors="pt",
+        truncation=True,
+        max_length=max_prompt_length,
+    )
+    device = next(trainer.model.parameters()).device
+    encoded = {k: v.to(device) for k, v in encoded.items()}
+    pad_id = tokenizer.pad_token_id
+    if pad_id is None:
+        pad_id = tokenizer.eos_token_id
+    with torch.no_grad():
+        out = trainer.model.generate(
+            **encoded,
+            max_new_tokens=max_new_tokens,
+            do_sample=temperature > 0.0,
+            temperature=max(temperature, 1e-5),
+            top_p=top_p,
+            pad_token_id=pad_id,
+        )
+    new_tokens = out[0, encoded["input_ids"].shape[1]:]
+    return tokenizer.decode(new_tokens, skip_special_tokens=True)
+
+
 def _make_rollout_func(
     base_url: str,
     logger: EpisodeLogger,
     max_turns: int,
+    max_new_tokens: int,
+    temperature: float,
+    top_p: float,
+    max_prompt_length: int,
 ) -> Callable[..., List[Dict[str, Any]]]:
-    try:
-        from trl.extras.openenv_utils import generate_rollout_completions  # type: ignore
-    except Exception:  # pragma: no cover
-        from trl.trainer.grpo_trainer import generate_rollout_completions  # type: ignore
-
     def rollout(trainer, prompts, **kwargs):  # noqa: ARG001
         results: List[Dict[str, Any]] = []
         for prompt in prompts:
@@ -100,12 +143,14 @@ def _make_rollout_func(
                     turn += 1
                     user_msg = render_observation(observation)
                     messages = list(prompt) + [{"role": "user", "content": user_msg}]
-                    rollout_out = generate_rollout_completions(trainer, [messages])
-                    text_field = rollout_out.get("text", "")
-                    if isinstance(text_field, list):
-                        text = text_field[0] if text_field else ""
-                    else:
-                        text = str(text_field or "")
+                    text = _generate_text(
+                        trainer,
+                        messages,
+                        max_new_tokens=max_new_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
+                        max_prompt_length=max_prompt_length,
+                    )
                     completions.append(text)
                     action = action_from_text(text)
                     step_result = env.step(action)
@@ -236,6 +281,10 @@ def train(settings: Settings, dataset: DiseaseDataset, *, run_id: str | None = N
         base_url=cfg.base_url,
         logger=logger,
         max_turns=cfg.max_turns_per_episode,
+        max_new_tokens=cfg.max_new_tokens_per_turn,
+        temperature=float(cfg.generation_temperature),
+        top_p=float(cfg.generation_top_p),
+        max_prompt_length=cfg.max_prompt_length,
     )
 
     grpo_cfg = GRPOConfig(
