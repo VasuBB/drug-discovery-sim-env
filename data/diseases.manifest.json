@@ -1,0 +1,12 @@
+{
+  "rows": 100,
+  "n_train": 90,
+  "n_test": 10,
+  "test_fraction": 0.1,
+  "seed": 42,
+  "min_druggability": 0.3,
+  "chembl_known_drugs_per_target": 10,
+  "fetched_at": "2026-04-26T10:50:50.636632+00:00",
+  "sha256": "d08ba80728c4d9da2868fb59f5b83754c7813abb9b797a5e4f4a59f3ae6e36a3",
+  "cache_path": "C:\\Users\\This Pc\\Documents\\drug-discovery-sim-env\\data\\diseases.jsonl"
+}
