@@ -17,7 +17,7 @@ from drug_discovery_env.core.models import (
     DrugDiscoveryObservation,
 )
 from drug_discovery_env.training.episode_logger import EpisodeLogger, TurnRecord
-from drug_discovery_env.training.prompting import action_from_text, render_observation
+from drug_discovery_env.training.prompting import action_from_text
 
 
 @dataclass
@@ -68,7 +68,6 @@ def run_episode(
         turn = 0
         while not step_result.done and turn < max_turns:
             turn += 1
-            rendered = render_observation(observation)
             raw_text = generate_text(observation)
             action = action_from_text(raw_text)
             turn_outputs.append(raw_text)
@@ -85,7 +84,6 @@ def run_episode(
                 if observation.reward_breakdown is not None
                 else {}
             )
-            tool_result = observation.last_result or {}
 
             logger.log_turn(
                 eid,
@@ -97,10 +95,6 @@ def run_episode(
                     target_compound_id=action.target_compound_id,
                     reasoning=action.reasoning,
                     evidence_ids=list(action.evidence_ids or []),
-                    model_raw_output=raw_text,
-                    rendered_observation=rendered,
-                    tool_result=tool_result,
-                    subagent_messages=list(observation.subagent_messages or []),
                     reward_breakdown=tr_breakdown,
                     budget_remaining=observation.budget_remaining,
                     budget_total=observation.budget_total,
@@ -173,8 +167,10 @@ def run_episode(
         stage_completed=stage_completed,
         budget_remaining_frac=budget_remaining_frac,
         oversight_violations=oversight_violations,
+        nominated_compound_id=nominated_compound_id,
+        nominated_smiles=nominated_smiles,
+        nominated_admet=nominated_admet,
         terminated_reason=terminated_reason or "ok",
-        extras={"nominated_smiles": nominated_smiles, "nominated_id": nominated_compound_id},
     )
 
     return EpisodeResult(

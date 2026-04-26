@@ -11,10 +11,12 @@ All hyperparameters come from ``settings.training`` (``config/defaults.yaml``).
 
 from __future__ import annotations
 
+import csv
 import os
 import random
 import threading
-from typing import Any, Dict, List
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 import torch
 
@@ -102,7 +104,9 @@ class _EpisodePlayer:
             return cached
 
         actions = parse_action_sequence(completion, self.max_turns)
-        episode_id = self.logger.start_episode(disease=disease)
+        episode_id = self.logger.start_episode(
+            disease=disease, model_completion=completion
+        )
         breakdown: Dict[str, float] = {}
         observation = None
         terminated_reason = ""
@@ -151,12 +155,6 @@ class _EpisodePlayer:
                         target_compound_id=payload.get("target_compound_id"),
                         reasoning=str(payload.get("reasoning", "")),
                         evidence_ids=[str(x) for x in (payload.get("evidence_ids") or [])],
-                        model_raw_output=completion if turn_idx == 1 else "",
-                        rendered_observation="",
-                        tool_result=dict(getattr(observation, "last_result", {}) or {}),
-                        subagent_messages=list(
-                            getattr(observation, "subagent_messages", []) or []
-                        ),
                         reward_breakdown=dict(breakdown),
                         budget_remaining=float(
                             getattr(observation, "budget_remaining", 0.0) or 0.0
@@ -191,6 +189,8 @@ class _EpisodePlayer:
         )
         steps = int(getattr(observation, "step_index", 0) or 0)
 
+        nominated_smiles, nominated_compound_id, nominated_admet = self._nominated(observation)
+
         self.logger.end_episode(
             episode_id,
             disease=disease,
@@ -200,6 +200,9 @@ class _EpisodePlayer:
             stage_completed=stage_completed,
             budget_remaining_frac=budget_frac,
             oversight_violations=oversight_violations,
+            nominated_compound_id=nominated_compound_id,
+            nominated_smiles=nominated_smiles,
+            nominated_admet=nominated_admet,
             terminated_reason=terminated_reason
             or ("done" if done else f"plan_exhausted ({len(actions)} actions)"),
         )
@@ -230,6 +233,37 @@ class _EpisodePlayer:
             "strategy": 0.0,
             "oversight_penalty": 0.0,
         }
+
+    @staticmethod
+    def _nominated(observation: Any) -> tuple[Optional[str], Optional[str], Dict[str, Any]]:
+        """Pick the lead compound from the final observation (matches rollout.py)."""
+
+        if observation is None:
+            return None, None, {}
+        compound_id = getattr(observation, "advanced_compound_id", None)
+        smiles: Optional[str] = None
+        admet: Dict[str, Any] = {}
+        actives = getattr(observation, "active_compounds", None) or []
+        for compound in actives:
+            if compound.get("id") == compound_id:
+                smiles = compound.get("smiles")
+                admet = compound.get("admet") or {}
+                break
+        if smiles is None and actives:
+            best = max(
+                actives,
+                key=lambda c: (
+                    float(c.get("potency", 0.0))
+                    + float(c.get("selectivity", 0.0))
+                    + float(c.get("safety", 0.0))
+                    + float(c.get("developability", 0.0))
+                )
+                / 4.0,
+            )
+            smiles = best.get("smiles")
+            compound_id = best.get("id")
+            admet = best.get("admet") or {}
+        return smiles, compound_id, admet
 
 
 def _resolve_diseases(disease, prompts, n: int) -> List[str]:
@@ -278,6 +312,179 @@ def _make_reward_funcs(player: _EpisodePlayer):
         return [r["reasoning_depth"] for r in _scored(completions, prompts, disease, **kwargs)]
 
     return [reward_total, reward_terminal, reward_stage, reward_budget, reward_reasoning]
+
+
+class _PlotsLogger:
+    """Render loss / reward / per-reward-func plots after every optimizer step.
+
+    Wrapped by a :class:`~transformers.TrainerCallback` subclass built inside
+    :func:`train` so importing this module doesn't require ``transformers``.
+    Every callback fire we append the new metrics to ``metrics.csv`` and
+    re-render PNGs into ``<plots_dir>/`` — this is the live evidence of
+    training (loss + per-reward-component curves) without needing to wait for
+    the run to finish.
+    """
+
+    def __init__(self, plots_dir: str | Path, metrics_csv: str | Path) -> None:
+        self.plots_dir = Path(plots_dir)
+        self.plots_dir.mkdir(parents=True, exist_ok=True)
+        self.metrics_csv = Path(metrics_csv)
+        self.metrics_csv.parent.mkdir(parents=True, exist_ok=True)
+        self._history: List[Dict[str, float]] = []
+        self._columns: List[str] = ["step"]
+        self._step_count = 0
+
+    @staticmethod
+    def _is_number(value: Any) -> bool:
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+    def _ensure_columns(self, entry: Dict[str, float]) -> None:
+        new = [k for k in entry.keys() if k not in self._columns]
+        if new:
+            self._columns.extend(new)
+            with self.metrics_csv.open("w", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=self._columns)
+                writer.writeheader()
+                for row in self._history:
+                    writer.writerow({k: row.get(k, "") for k in self._columns})
+
+    def _append_csv(self, entry: Dict[str, float]) -> None:
+        if not self.metrics_csv.exists() or self.metrics_csv.stat().st_size == 0:
+            with self.metrics_csv.open("w", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=self._columns)
+                writer.writeheader()
+        self._ensure_columns(entry)
+        with self.metrics_csv.open("a", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=self._columns)
+            writer.writerow({k: entry.get(k, "") for k in self._columns})
+
+    def _render(self) -> None:
+        if not self._history:
+            return
+        try:
+            import matplotlib
+
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+        except Exception as exc:  # pragma: no cover - matplotlib should be available
+            print(f"[plot] matplotlib unavailable ({exc}); skipping render")
+            return
+
+        def _xy(key: str) -> tuple[List[float], List[float]]:
+            xs: List[float] = []
+            ys: List[float] = []
+            for row in self._history:
+                v = row.get(key)
+                if v is None or not isinstance(v, (int, float)) or v != v:
+                    continue
+                xs.append(row["step"])
+                ys.append(float(v))
+            return xs, ys
+
+        loss_x, loss_y = _xy("loss")
+        if loss_y:
+            fig, ax = plt.subplots(figsize=(8, 4))
+            ax.plot(loss_x, loss_y, linewidth=1.5, color="#c0392b")
+            ax.set_xlabel("optimizer step")
+            ax.set_ylabel("loss")
+            ax.set_title("GRPO training loss")
+            ax.grid(alpha=0.3)
+            fig.tight_layout()
+            fig.savefig(self.plots_dir / "training_loss.png", dpi=150)
+            plt.close(fig)
+
+        reward_x, reward_y = _xy("reward")
+        if reward_y:
+            stds: List[float] = []
+            for row in self._history:
+                v = row.get("reward")
+                if v is None or not isinstance(v, (int, float)) or v != v:
+                    continue
+                stds.append(float(row.get("reward_std", 0.0) or 0.0))
+            fig, ax = plt.subplots(figsize=(8, 4))
+            ax.plot(reward_x, reward_y, linewidth=1.5, color="#2c7fb8", label="mean reward")
+            if any(s > 0 for s in stds):
+                lo = [m - s for m, s in zip(reward_y, stds)]
+                hi = [m + s for m, s in zip(reward_y, stds)]
+                ax.fill_between(
+                    reward_x, lo, hi, color="#2c7fb8", alpha=0.15, label="+/-1 std"
+                )
+            ax.set_xlabel("optimizer step")
+            ax.set_ylabel("reward")
+            ax.set_title("GRPO group reward per step")
+            ax.legend()
+            ax.grid(alpha=0.3)
+            fig.tight_layout()
+            fig.savefig(self.plots_dir / "training_reward.png", dpi=150)
+            plt.close(fig)
+
+        component_keys = sorted(
+            {
+                k
+                for row in self._history
+                for k in row.keys()
+                if k.startswith("rewards/") and not k.endswith("/std")
+            }
+        )
+        if component_keys:
+            fig, ax = plt.subplots(figsize=(8, 4.5))
+            palette = [
+                "#1f77b4",
+                "#ff7f0e",
+                "#2ca02c",
+                "#d62728",
+                "#9467bd",
+                "#8c564b",
+                "#e377c2",
+            ]
+            for idx, key in enumerate(component_keys):
+                xs, ys = _xy(key)
+                if not xs:
+                    continue
+                label = key.replace("rewards/", "").replace("/mean", "")
+                ax.plot(xs, ys, linewidth=1.4, color=palette[idx % len(palette)], label=label)
+            ax.set_xlabel("optimizer step")
+            ax.set_ylabel("reward component")
+            ax.set_title("Per-component reward functions")
+            ax.legend(loc="best", fontsize=8)
+            ax.grid(alpha=0.3)
+            fig.tight_layout()
+            fig.savefig(self.plots_dir / "reward_components.png", dpi=150)
+            plt.close(fig)
+
+    def record(self, step: int, logs: Dict[str, Any]) -> None:
+        if not logs:
+            return
+        entry: Dict[str, float] = {"step": int(step or 0)}
+        for key, value in logs.items():
+            if self._is_number(value):
+                entry[key] = float(value)
+        if len(entry) <= 1:
+            return
+        self._history.append(entry)
+        self._step_count += 1
+        try:
+            self._append_csv(entry)
+        except Exception as exc:  # pragma: no cover
+            print(f"[plot] csv append failed: {exc}")
+        try:
+            self._render()
+        except Exception as exc:  # pragma: no cover
+            print(f"[plot] render failed: {exc}")
+
+
+def _build_plots_callback(plots_dir: str | Path, metrics_csv: str | Path):
+    """Build a HF TrainerCallback that drives :class:`_PlotsLogger` on every log."""
+
+    from transformers import TrainerCallback
+
+    plots = _PlotsLogger(plots_dir=plots_dir, metrics_csv=metrics_csv)
+
+    class TrainingPlotsCallback(TrainerCallback):
+        def on_log(self, args, state, control, logs=None, **kwargs):  # noqa: ARG002
+            plots.record(int(getattr(state, "global_step", 0) or 0), logs or {})
+
+    return TrainingPlotsCallback(), plots
 
 
 def _load_model_and_tokenizer(settings: Settings):
@@ -423,13 +630,20 @@ def train(settings: Settings, dataset: DiseaseDataset, *, run_id: str | None = N
         top_p=float(cfg.generation_top_p),
     )
 
+    plots_dir = Path(cfg.output_dir) / "plots"
+    metrics_csv = Path(cfg.output_dir) / "metrics.csv"
+    plots_callback, _plots_logger = _build_plots_callback(plots_dir, metrics_csv)
+
     trainer = GRPOTrainer(
         model=model,
         processing_class=tokenizer,
         reward_funcs=_make_reward_funcs(player),
         train_dataset=hf_dataset,
         args=grpo_cfg,
+        callbacks=[plots_callback],
     )
+    print(f"[train] live plots will be written to {plots_dir}")
     trainer.train()
     trainer.save_model(cfg.output_dir)
+    print(f"[train] final plots saved to {plots_dir}")
     return cfg.output_dir
