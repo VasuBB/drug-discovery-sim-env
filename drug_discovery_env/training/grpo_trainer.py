@@ -129,6 +129,91 @@ def _make_replay_reward_func(settings: Settings):
     return reward_func
 
 
+def _make_debug_replay_reward_func(
+    settings: Settings,
+    *,
+    debug_limit: int,
+):
+    snapshot_cache: Dict[tuple[str, tuple[str, ...]], tuple[Any, str | None]] = {}
+    state = {"printed": 0}
+
+    def reward_func(
+        completions,
+        prompts=None,
+        disease=None,
+        history=None,
+        log_metric=None,
+        **kwargs,  # noqa: ARG001
+    ):
+        if disease is None or history is None:
+            return [0.0 for _ in completions]
+
+        rewards: list[float] = []
+        prompt_values = prompts or ["" for _ in completions]
+        for prompt, completion, sample_disease, sample_history in zip(
+            prompt_values, completions, disease, history, strict=True
+        ):
+            debug_payload: Dict[str, Any] = {
+                "prompt": str(prompt),
+                "completion": str(completion),
+                "disease": str(sample_disease),
+                "history_len": len(sample_history),
+            }
+            try:
+                env = _restore_env_before_step(
+                    list(sample_history),
+                    disease=str(sample_disease),
+                    settings=settings,
+                    snapshot_cache=snapshot_cache,
+                )
+                pre_breakdown = env.reward_engine.compute(env._ensure_state(), terminal=False)
+                parsed_action = action_from_text(str(completion))
+                observation = env.step(parsed_action)
+                post_total = (
+                    float(observation.reward_breakdown.total)
+                    if observation.reward_breakdown is not None
+                    else float(observation.reward or 0.0)
+                )
+                shaped = post_total - float(pre_breakdown.total)
+                if observation.done and observation.reward is not None:
+                    shaped += float(observation.reward)
+                debug_payload.update(
+                    {
+                        "parsed_action": parsed_action.model_dump(),
+                        "tool_result": observation.last_result,
+                        "message": observation.message,
+                        "next_state": observation.state_summary,
+                        "reward": shaped,
+                    }
+                )
+            except Exception as exc:
+                shaped = 0.0
+                debug_payload["error"] = str(exc)
+                debug_payload["reward"] = shaped
+            rewards.append(shaped)
+
+            if state["printed"] < debug_limit:
+                state["printed"] += 1
+                print(
+                    "[training-debug] sample\n"
+                    f"prompt:\n{debug_payload['prompt']}\n\n"
+                    f"completion:\n{debug_payload['completion']}\n\n"
+                    f"parsed_action: {debug_payload.get('parsed_action')}\n"
+                    f"tool_result: {debug_payload.get('tool_result')}\n"
+                    f"message: {debug_payload.get('message')}\n"
+                    f"next_state: {debug_payload.get('next_state')}\n"
+                    f"reward: {debug_payload['reward']}\n"
+                    + (f"error: {debug_payload['error']}\n" if "error" in debug_payload else ""),
+                    flush=True,
+                )
+
+        if callable(log_metric) and rewards:
+            log_metric("env_reward/replay_mean", sum(rewards) / len(rewards))
+        return rewards
+
+    return reward_func
+
+
 def run_grpo_if_available(
     *,
     enable_actual_training: bool = False,
@@ -139,6 +224,8 @@ def run_grpo_if_available(
     device: str = "auto",
     output_dir: str = "outputs/grpo",
     max_train_steps: int = 20,
+    debug_io: bool = False,
+    debug_limit: int = 10,
 ) -> Dict[str, Any]:
     cfg = training_config()
     model_name = model_name_override or str(cfg["model"])
@@ -200,7 +287,11 @@ def run_grpo_if_available(
 
     env_settings = get_settings().model_copy(deep=True)
     env_settings.data.mode = DataSourceMode.LIVE_ONLY
-    reward_func = _make_replay_reward_func(env_settings)
+    reward_func = (
+        _make_debug_replay_reward_func(env_settings, debug_limit=debug_limit)
+        if debug_io
+        else _make_replay_reward_func(env_settings)
+    )
 
     num_generations = max(2, min(int(cfg["group_size"]), 2))
     raw_cfg: Dict[str, Any] = {

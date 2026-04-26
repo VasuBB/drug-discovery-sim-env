@@ -21,6 +21,8 @@ def main() -> None:
     parser.add_argument("--device", choices=["auto", "cpu", "mps", "cuda"], default="auto")
     parser.add_argument("--output-dir", type=str, default="outputs/grpo")
     parser.add_argument("--max-train-steps", type=int, default=20)
+    parser.add_argument("--debug-io", action="store_true", help="Print prompt, completion, env result, and reward during replay scoring")
+    parser.add_argument("--debug-limit", type=int, default=10, help="Maximum number of replay samples to print when --debug-io is enabled")
     args = parser.parse_args()
 
     result = run_grpo_if_available(
@@ -32,6 +34,8 @@ def main() -> None:
         device=args.device,
         output_dir=args.output_dir,
         max_train_steps=args.max_train_steps,
+        debug_io=args.debug_io,
+        debug_limit=args.debug_limit,
     )
     print(json.dumps(result, indent=2))
 
