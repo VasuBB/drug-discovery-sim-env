@@ -77,20 +77,22 @@ class LiveAPIProvider(DataProvider):
 
     def get_targets_for_disease(self, disease: str) -> dict[str, Any]:
         disease_id = self._ot_search_disease_id(disease)
-        target_name = "UNKNOWN_TARGET"
-        target_class = "unknown"
-        druggability = 0.45
-        confidence = 0.40
+        if not disease_id:
+            raise ValueError(f"No live Open Targets disease match found for '{disease}'")
 
-        if disease_id:
-            best = self._ot_top_target(disease_id)
-            if best:
-                target = best.get("target", {})
-                target_name = str(target.get("approvedSymbol") or target_name)
-                classes = target.get("targetClass") or []
-                target_class = str(classes[0].get("label")) if classes else target_class
-                druggability = max(0.0, min(1.0, float(best.get("score", 0.45))))
-                confidence = max(0.0, min(1.0, 0.35 + druggability * 0.6))
+        best = self._ot_top_target(disease_id)
+        if not best:
+            raise ValueError(f"No live associated target found for '{disease}'")
+
+        target = best.get("target", {})
+        target_name = str(target.get("approvedSymbol") or "").strip()
+        if not target_name:
+            raise ValueError(f"Live target lookup returned no symbol for '{disease}'")
+
+        classes = target.get("targetClass") or []
+        target_class = str(classes[0].get("label")) if classes else "unknown"
+        druggability = max(0.0, min(1.0, float(best.get("score", 0.45))))
+        confidence = max(0.0, min(1.0, 0.35 + druggability * 0.6))
 
         return {
             "disease": disease,

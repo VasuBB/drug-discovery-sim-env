@@ -8,24 +8,19 @@ from drug_discovery_env.config.settings import DataSourceMode, get_settings
 from drug_discovery_env.server.environment import DrugDiscoveryEnv
 
 
-def _mode(value: str) -> DataSourceMode:
-    return DataSourceMode(value)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run one local rollout")
-    parser.add_argument("--disease", type=str, default="Type 2 Diabetes")
-    parser.add_argument("--data-mode", type=_mode, choices=list(DataSourceMode), default=DataSourceMode.HYBRID)
+    parser.add_argument("--disease", type=str, required=True)
     args = parser.parse_args()
 
     settings = get_settings().model_copy(deep=True)
-    settings.data.mode = args.data_mode
+    settings.data.mode = DataSourceMode.LIVE_ONLY
     env = DrugDiscoveryEnv(settings=settings)
     obs = env.reset(disease=args.disease)
     print("RESET:", obs.state_summary)
 
     scripted_actions = [
-        '<reasoning>Select target.</reasoning><tool>select_target</tool><params>{"disease":"Type 2 Diabetes"}</params>',
+        f'<reasoning>Select target.</reasoning><tool>select_target</tool><params>{{"disease":"{args.disease}"}}</params>',
         "<reasoning>Need a candidate pool.</reasoning><tool>search_compounds</tool><params>{\"min_qed\":0.5}</params>",
     ]
     for action in scripted_actions:

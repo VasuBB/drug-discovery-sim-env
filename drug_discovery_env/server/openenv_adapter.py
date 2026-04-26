@@ -25,8 +25,8 @@ class OpenEnvEnvironmentAdapter:
     def __init__(self, env: DrugDiscoveryEnv | None = None) -> None:
         self.env = env or DrugDiscoveryEnv()
 
-    def reset(self) -> DrugDiscoveryObservation:
-        return self.env.reset()
+    def reset(self, disease: str, **kwargs: Any) -> DrugDiscoveryObservation:
+        return self.env.reset(disease=disease, **kwargs)
 
     def step(self, action: DrugDiscoveryAction | str) -> StepResult:
         obs = self.env.step(action)

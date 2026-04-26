@@ -4,7 +4,7 @@ app:
   random_seed: 42
 
 data:
-  mode: "hybrid"
+  mode: "live_only"
   local_data_dir: "drug_discovery_env/data"
   request_timeout_seconds: 6.0
   retries: 2

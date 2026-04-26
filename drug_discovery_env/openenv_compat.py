@@ -87,6 +87,12 @@ if not _loaded:
         def sync(self) -> "EnvClient[A, O, S]":
             return self
 
+        def __enter__(self) -> "EnvClient[A, O, S]":
+            return self
+
+        def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+            return False
+
 
 __all__ = [
     "Action",

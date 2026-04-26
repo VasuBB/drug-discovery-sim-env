@@ -2,7 +2,7 @@
 
 OpenEnv Environment subclass implementing the MCP-style tool surface.
 
-  - reset() starts a fresh campaign in a sampled disease scenario
+  - reset() starts a fresh campaign for an explicit disease provided by the caller
   - step() consumes one action: a tool call + reasoning + optional compound id
   - sub-agents (chemist, toxicologist, budget, oversight) review every step
     and emit severity-tagged messages (info/warn/block)
@@ -33,7 +33,6 @@ from drug_discovery_env.core.models import (
     DrugDiscoveryState,
     ToolProvenance,
 )
-from drug_discovery_env.core.scenarios import find_scenario, sample_scenario
 from drug_discovery_env.core.serializer import summarize_state
 from drug_discovery_env.core.stage_manager import StageManager
 from drug_discovery_env.core.state import GameState
@@ -76,7 +75,7 @@ class DrugDiscoveryEnv(Environment[DrugDiscoveryAction, DrugDiscoveryObservation
 
         self.tools = {
             "select_target": SelectTargetTool(self.settings, self.provider),
-            "search_compounds": SearchCompoundsTool(self.provider, lab=self.lab),
+            "search_compounds": SearchCompoundsTool(self.provider),
             "predict_affinity": PredictAffinityTool(self.settings, self.topology, lab=self.lab),
             "evaluate_admet": EvaluateAdmetTool(lab=self.lab),
             "modify_molecule": ModifyMoleculeTool(self.settings, lab=self.lab),
@@ -85,7 +84,6 @@ class DrugDiscoveryEnv(Environment[DrugDiscoveryAction, DrugDiscoveryObservation
             "search_literature": SearchLiteratureTool(
                 self.provider,
                 retriever_factory=lambda docs: HybridRetriever(self.settings, docs),
-                lab=self.lab,
             ),
             "advance_stage": AdvanceStageTool(self.settings, self.stage_manager),
             "abandon_compound": AbandonCompoundTool(),
@@ -116,28 +114,24 @@ class DrugDiscoveryEnv(Environment[DrugDiscoveryAction, DrugDiscoveryObservation
     ) -> DrugDiscoveryObservation:
         if disease is None:
             disease = kwargs.get("disease")
-        scenario = find_scenario(disease) if disease else None
-        if scenario is None:
-            scenario = sample_scenario(seed=seed)
+        if not disease:
+            raise ValueError("disease is required when running in live_only mode")
 
         max_steps = int(kwargs.get("max_steps") or self.settings.app.max_steps)
         budget = float(kwargs.get("budget") or self.settings.budget.initial_credits)
 
         gs = GameState(
-            disease=scenario.disease,
+            disease=disease,
             stage="target_selection",
             step=0,
             max_steps=max_steps,
             budget_initial=budget,
             budget_remaining=budget,
-            pathway_graph={
-                scenario.canonical_target: list(scenario.alternative_targets),
-                **{alt: [scenario.canonical_target] for alt in scenario.alternative_targets},
-            },
-            disease_nodes=scenario.all_targets(),
+            pathway_graph={},
+            disease_nodes=[],
         )
         gs.last_message = (
-            f"New campaign: find a lead compound for {scenario.disease}. "
+            f"New campaign: find a lead compound for {disease}. "
             f"Budget {budget:.0f}, max {max_steps} steps. Begin with stage 'target_selection'."
         )
         self._game_state = gs

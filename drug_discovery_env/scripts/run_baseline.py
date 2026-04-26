@@ -36,14 +36,14 @@ def random_policy(obs: Any) -> DrugDiscoveryAction:
 
     if stage == "target_selection":
         return DrugDiscoveryAction(
-            tool="advance_stage",
-            params={"target": _r.choice(["DPP4", "GLP1R", "ACE", "SERT", "EGFR", "BACE1"])},
-            reasoning="Pick a plausible target.",
+            tool="select_target",
+            params={"disease": obs.disease},
+            reasoning="Resolve the target from the live provider before advancing.",
         )
     if not target:
         return DrugDiscoveryAction(
             tool="select_target",
-            params={"target": "DPP4"},
+            params={"disease": obs.disease},
             reasoning="Need a target before any chemistry.",
         )
     if not actives:
@@ -92,8 +92,8 @@ def random_policy(obs: Any) -> DrugDiscoveryAction:
     return DrugDiscoveryAction(tool="pause_and_review_all", reasoning="Pause.")
 
 
-def play_one(env: DrugDiscoveryEnv) -> RolloutSummary:
-    obs = env.reset()
+def play_one(env: DrugDiscoveryEnv, disease: str) -> RolloutSummary:
+    obs = env.reset(disease=disease)
     total_reward = 0.0
     breakdown: Dict[str, float] = {}
     steps = 0
@@ -120,19 +120,19 @@ def play_one(env: DrugDiscoveryEnv) -> RolloutSummary:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Random-policy baseline runner")
     parser.add_argument("--episodes", type=int, default=10)
-    parser.add_argument("--data-mode", choices=[m.value for m in DataSourceMode], default="hybrid")
+    parser.add_argument("--disease", type=str, required=True)
     parser.add_argument("--out-dir", type=str, default="outputs/baseline")
     args = parser.parse_args()
 
     settings = get_settings().model_copy(deep=True)
-    settings.data.mode = DataSourceMode(args.data_mode)
+    settings.data.mode = DataSourceMode.LIVE_ONLY
     env = DrugDiscoveryEnv(settings=settings)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     summaries: List[RolloutSummary] = []
     for ep in range(args.episodes):
-        s = play_one(env)
+        s = play_one(env, disease=args.disease)
         summaries.append(s)
         print(
             f"[baseline {ep + 1}/{args.episodes}] reward={s.total_reward:.3f}  "

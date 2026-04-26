@@ -12,8 +12,9 @@ Hackathon (India 2026)**. Targets four hackathon themes simultaneously:
 - **Fleet AI bonus & Mercor bonus**: oversight-compliance penalty + reasoning-trace
   depth scoring.
 
-> Nothing in this environment is real chemistry. RDKit + a small ChEMBL-like
-> compound library produce plausible feedback so the agent can learn systematic
+> Nothing in this environment is real chemistry. Live target / compound /
+> literature retrieval is combined with RDKit-backed simulated chemistry so the
+> agent can learn systematic
 > scientific reasoning under resource constraints.
 
 ## Links (judge-facing)
@@ -119,24 +120,24 @@ For macOS / CPU:
 python -m drug_discovery_env.scripts.setup_training_env
 ```
 
-### 2. Validate snapshots + run tests
+### 2. Run tests
 
 ```bash
-python -m drug_discovery_env.scripts.prepare_snapshots
 pytest -q
 ```
 
 ### 3. Smoke test the env
 
 ```bash
-python -m drug_discovery_env.scripts.run_local_rollout --data-mode hybrid
-python -m drug_discovery_env.scripts.run_evaluation --episodes 5 --data-mode hybrid
+python -m drug_discovery_env.scripts.live_smoke --disease "Type 2 Diabetes" --literature-query "INSR diabetes selectivity safety"
+python -m drug_discovery_env.scripts.run_local_rollout --disease "Type 2 Diabetes"
+python -m drug_discovery_env.scripts.run_evaluation --disease "Type 2 Diabetes" --episodes 5
 ```
 
 ### 4. Run the random-policy baseline
 
 ```bash
-python -m drug_discovery_env.scripts.run_baseline --episodes 10
+python -m drug_discovery_env.scripts.run_baseline --disease "Type 2 Diabetes" --episodes 10
 ```
 Writes `outputs/baseline/baseline_summaries.json` — this is the floor that GRPO has to beat.
 
@@ -156,6 +157,7 @@ and uses the env's actual terminal reward as the GRPO signal:
 ```bash
 python -m drug_discovery_env.scripts.train_grpo_live \
   --base-url http://localhost:8000 \
+  --disease "Type 2 Diabetes" \
   --model Qwen/Qwen2.5-3B-Instruct \
   --output-dir outputs/grpo
 ```
@@ -164,7 +166,7 @@ python -m drug_discovery_env.scripts.train_grpo_live \
 local dev without a GPU-resident LLM:
 
 ```bash
-python -m drug_discovery_env.scripts.run_grpo --train --episodes 2 --device auto
+python -m drug_discovery_env.scripts.run_grpo --train --disease "Type 2 Diabetes" --episodes 2 --device auto
 ```
 
 **Reproducible plotted experiment** — produces `loss_curve.png`, `reward_curve.png`,
@@ -172,9 +174,17 @@ python -m drug_discovery_env.scripts.run_grpo --train --episodes 2 --device auto
 
 ```bash
 python -m drug_discovery_env.scripts.run_training_experiment \
-  --episodes 2 --data-mode hybrid --device auto \
+  --disease "Type 2 Diabetes" --episodes 2 --device auto \
   --model Qwen/Qwen2.5-0.5B-Instruct --max-train-steps 10 \
   --out-dir artifacts/training
+```
+
+**Model-based evaluation** - evaluate the base or trained model directly:
+
+```bash
+python -m drug_discovery_env.scripts.run_evaluation \
+  --disease "Type 2 Diabetes" --episodes 3 \
+  --policy model --model outputs/grpo
 ```
 
 The Colab notebook [`notebooks/02_train_grpo_colab.ipynb`](notebooks/02_train_grpo_colab.ipynb)

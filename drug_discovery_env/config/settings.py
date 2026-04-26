@@ -12,8 +12,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class DataSourceMode(str, Enum):
     LIVE_ONLY = "live_only"
-    LOCAL_ONLY = "local_only"
-    HYBRID = "hybrid"
 
 
 class RetrievalMode(str, Enum):

@@ -1,15 +1,10 @@
-"""select_target — pick a protein target for the disease.
-
-Backed by the data provider (Open Targets live with local fallback) and falls
-back to the built-in scenario library when no provider hit is found.
-"""
+"""select_target — pick a protein target for the disease from live data."""
 
 from __future__ import annotations
 
 from typing import Any, Dict
 
 from drug_discovery_env.config.settings import Settings
-from drug_discovery_env.core.scenarios import find_scenario
 from drug_discovery_env.core.state import GameState
 from drug_discovery_env.tools.base import Tool
 
@@ -38,19 +33,19 @@ class SelectTargetTool(Tool):
         else:
             try:
                 target = self.provider.get_targets_for_disease(disease)
-            except Exception:
-                target = {}
-            if not target.get("target") or target.get("target") == "UNKNOWN_TARGET":
-                fallback = find_scenario(disease)
-                if fallback:
-                    target = {
-                        "disease": disease,
-                        "target": fallback.canonical_target,
-                        "target_class": "scenario",
-                        "druggability": 1.0 - fallback.difficulty,
-                        "source": "simulation",
-                        "confidence": 0.6,
-                    }
+            except Exception as exc:
+                return {
+                    "error": "target_lookup_failed",
+                    "message": str(exc),
+                    "disease": disease,
+                    "source": "live",
+                    "confidence": 0.0,
+                    "provenance": {
+                        "source": "live",
+                        "timestamp": "",
+                        "confidence": 0.0,
+                    },
+                }
 
         state.target = target
         state.selected_target = target.get("target")

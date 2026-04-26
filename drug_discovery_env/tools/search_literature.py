@@ -1,11 +1,10 @@
-"""search_literature — hybrid retrieval (BM25 + dense + reranker) with claim grounding."""
+"""search_literature — live literature retrieval with claim grounding."""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict
 
-from drug_discovery_env.chemistry.rdkit_lab import LabSimulator
 from drug_discovery_env.core.state import EvidenceRecord, GameState
 from drug_discovery_env.retrieval.hybrid import HybridRetriever
 from drug_discovery_env.tools.base import Tool
@@ -19,11 +18,9 @@ class SearchLiteratureTool(Tool):
         self,
         provider: Any,
         retriever_factory: Callable[[list[dict[str, Any]]], HybridRetriever],
-        lab: LabSimulator | None = None,
     ) -> None:
         self.provider = provider
         self.retriever_factory = retriever_factory
-        self.lab = lab or LabSimulator()
 
     def execute(self, state: GameState, params: Dict[str, Any]) -> Dict[str, Any]:
         query = str(params.get("query", state.disease))
@@ -31,22 +28,20 @@ class SearchLiteratureTool(Tool):
 
         try:
             docs = self.provider.search_literature(query)
-        except Exception:
-            docs = []
-
-        if not docs:
-            # offline fallback corpus from rdkit_lab
-            docs = [
-                {
-                    "id": f"sim_{i}",
-                    "title": d["title"],
-                    "abstract": d["abstract"],
-                    "score": 0.5,
-                    "source": "simulation",
-                    "confidence": 0.4,
-                }
-                for i, d in enumerate(self.lab.literature_search(query, max_results=5))
-            ]
+        except Exception as exc:
+            return {
+                "error": "literature_lookup_failed",
+                "message": str(exc),
+                "query": query,
+                "ranked_docs": [],
+                "method": "live",
+                "claim_grounding": [
+                    {"claim": claim, "snippet_id": None, "confidence": 0.0, "status": "unmatched"}
+                    for claim in claims
+                ],
+                "source": "live",
+                "confidence": 0.0,
+            }
 
         retriever = self.retriever_factory(docs)
         ranked = retriever.retrieve(query)
@@ -87,4 +82,6 @@ class SearchLiteratureTool(Tool):
             "ranked_docs": ranked,
             "method": ranked[0].get("method", "none") if ranked else "none",
             "claim_grounding": claim_grounding,
+            "source": "live",
+            "confidence": max((float(doc.get("confidence", 0.0)) for doc in ranked), default=0.0),
         }

@@ -28,8 +28,8 @@ class TrainingRunReport:
 def run_training_dry_run(
     num_episodes: int = 3,
     *,
-    data_mode: DataSourceMode = DataSourceMode.HYBRID,
-    disease: str = "Type 2 Diabetes",
+    data_mode: DataSourceMode = DataSourceMode.LIVE_ONLY,
+    disease: str,
 ) -> TrainingRunReport:
     cfg = training_config()
     samples = generate_rollouts(num_episodes=num_episodes, data_mode=data_mode, disease=disease)
@@ -47,8 +47,8 @@ def run_training_dry_run(
 def _build_training_dataset(
     num_episodes: int,
     *,
-    data_mode: DataSourceMode = DataSourceMode.HYBRID,
-    disease: str = "Type 2 Diabetes",
+    data_mode: DataSourceMode = DataSourceMode.LIVE_ONLY,
+    disease: str,
 ):
     from datasets import Dataset
 
@@ -85,8 +85,8 @@ def run_grpo_if_available(
     enable_actual_training: bool = False,
     model_name_override: str | None = None,
     num_episodes: int = 3,
-    data_mode: DataSourceMode = DataSourceMode.HYBRID,
-    disease: str = "Type 2 Diabetes",
+    data_mode: DataSourceMode = DataSourceMode.LIVE_ONLY,
+    disease: str,
     device: str = "auto",
     output_dir: str = "outputs/grpo",
     max_train_steps: int = 20,

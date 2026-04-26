@@ -42,7 +42,7 @@ def main() -> None:
 
     system = platform.system().lower()
     print("Setup complete on", system)
-    print("Try: python -m drug_discovery_env.scripts.run_grpo --episodes 1 --data-mode live_only --device auto")
+    print("Try: python -m drug_discovery_env.scripts.run_grpo --disease \"Type 2 Diabetes\" --episodes 1 --device auto")
 
 
 if __name__ == "__main__":

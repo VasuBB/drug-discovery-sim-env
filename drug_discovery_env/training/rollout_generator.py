@@ -45,11 +45,15 @@ def generate_rollouts(
     *,
     settings: Optional[Settings] = None,
     data_mode: Optional[DataSourceMode] = None,
-    disease: str = "Type 2 Diabetes",
+    disease: str,
 ) -> list[RolloutSample]:
     cfg = settings.model_copy(deep=True) if settings else get_settings().model_copy(deep=True)
     if data_mode is not None:
+        if data_mode != DataSourceMode.LIVE_ONLY:
+            raise ValueError("Only live_only data mode is supported")
         cfg.data.mode = data_mode
+    if not disease:
+        raise ValueError("disease is required for rollout generation")
     env = DrugDiscoveryEnv(settings=cfg)
     samples: list[RolloutSample] = []
     for _ in range(num_episodes):

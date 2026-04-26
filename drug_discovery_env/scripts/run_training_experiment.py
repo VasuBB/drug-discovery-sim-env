@@ -9,16 +9,28 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 from drug_discovery_env.config.settings import DataSourceMode
+from drug_discovery_env.server.environment import DrugDiscoveryEnv
 from drug_discovery_env.training.grpo_trainer import run_grpo_if_available
-from drug_discovery_env.training.rollout_generator import generate_rollouts
+from drug_discovery_env.training.model_policy import TransformersToolPolicy
+from drug_discovery_env.training.policy_evaluator import evaluate_in_process
 
 
-def random_baseline_reward(num_episodes: int, data_mode: DataSourceMode) -> float:
-    """Pessimistic baseline proxy for the comparison figure."""
-    samples = generate_rollouts(num_episodes=max(1, num_episodes // 2), data_mode=data_mode)
-    if not samples:
-        return 0.0
-    return sum(max(0.0, s.reward - 0.08) for s in samples) / len(samples)
+def model_mean_reward(
+    model_name_or_path: str,
+    *,
+    disease: str,
+    episodes: int,
+    device: str,
+) -> float:
+    env = DrugDiscoveryEnv()
+    policy = TransformersToolPolicy(model_name_or_path, device=device)
+    metrics = evaluate_in_process(
+        env=env,
+        disease=disease,
+        episodes=episodes,
+        choose_action=policy.next_action,
+    )
+    return sum(m.total_reward for m in metrics) / len(metrics)
 
 
 def plot_curves(log_history: list[dict], out_dir: Path) -> dict[str, str]:
@@ -69,21 +81,28 @@ def plot_curves(log_history: list[dict], out_dir: Path) -> dict[str, str]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run train-vs-baseline experiment and save plots")
     parser.add_argument("--episodes", type=int, default=2)
-    parser.add_argument("--data-mode", choices=[m.value for m in DataSourceMode], default="hybrid")
+    parser.add_argument("--disease", type=str, required=True)
+    parser.add_argument("--eval-episodes", type=int, default=1)
     parser.add_argument("--device", choices=["auto", "cpu", "mps", "cuda"], default="auto")
     parser.add_argument("--model", type=str, default="Qwen/Qwen2.5-0.5B-Instruct")
     parser.add_argument("--out-dir", type=str, default="artifacts/training")
     parser.add_argument("--max-train-steps", type=int, default=10)
     args = parser.parse_args()
 
-    data_mode = DataSourceMode(args.data_mode)
-    baseline = random_baseline_reward(args.episodes, data_mode)
+    data_mode = DataSourceMode.LIVE_ONLY
+    baseline = model_mean_reward(
+        args.model,
+        disease=args.disease,
+        episodes=args.eval_episodes,
+        device=args.device,
+    )
 
     result = run_grpo_if_available(
         enable_actual_training=True,
         model_name_override=args.model,
         num_episodes=args.episodes,
         data_mode=data_mode,
+        disease=args.disease,
         device=args.device,
         output_dir=args.out_dir,
         max_train_steps=args.max_train_steps,
@@ -93,18 +112,29 @@ def main() -> None:
     paths = plot_curves(log_history, Path(args.out_dir))
 
     trained_reward = float(result.get("reward_mean", 0.0))
+    trained_eval_status = "not_evaluated"
+    if result.get("status") == "trl_trained":
+        trained_reward = model_mean_reward(
+            args.out_dir,
+            disease=args.disease,
+            episodes=args.eval_episodes,
+            device=args.device,
+        )
+        trained_eval_status = "evaluated_checkpoint"
+
     compare_path = Path(args.out_dir) / "baseline_vs_trained.png"
     plt.figure(figsize=(6, 4))
-    plt.bar(["baseline", "trained"], [baseline, trained_reward])
+    plt.bar(["base model", "trained model"], [baseline, trained_reward])
     plt.ylabel("mean reward")
-    plt.title("Baseline vs Trained")
+    plt.title("Base Model vs Trained Model")
     plt.tight_layout()
     plt.savefig(compare_path, dpi=150)
     plt.close()
 
     summary = {
-        "baseline_mean_reward": baseline,
+        "base_model_mean_reward": baseline,
         "trained_mean_reward": trained_reward,
+        "trained_eval_status": trained_eval_status,
         "comparison_plot": str(compare_path),
         **paths,
         "run_result": result,

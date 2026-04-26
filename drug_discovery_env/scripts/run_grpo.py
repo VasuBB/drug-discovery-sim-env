@@ -12,22 +12,12 @@ from drug_discovery_env.config.settings import DataSourceMode
 from drug_discovery_env.training.grpo_trainer import run_grpo_if_available
 
 
-def _mode(value: str) -> DataSourceMode:
-    return DataSourceMode(value)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run GRPO readiness or offline training")
     parser.add_argument("--train", action="store_true", help="Run actual GRPO trainer")
     parser.add_argument("--model", type=str, default=None, help="Override model name")
     parser.add_argument("--episodes", type=int, default=3, help="Rollout episodes for dataset creation")
-    parser.add_argument("--disease", type=str, default="Type 2 Diabetes")
-    parser.add_argument(
-        "--data-mode",
-        type=_mode,
-        choices=list(DataSourceMode),
-        default=DataSourceMode.HYBRID,
-    )
+    parser.add_argument("--disease", type=str, required=True)
     parser.add_argument("--device", choices=["auto", "cpu", "mps", "cuda"], default="auto")
     parser.add_argument("--output-dir", type=str, default="outputs/grpo")
     parser.add_argument("--max-train-steps", type=int, default=20)
@@ -37,7 +27,7 @@ def main() -> None:
         enable_actual_training=args.train,
         model_name_override=args.model,
         num_episodes=args.episodes,
-        data_mode=args.data_mode,
+        data_mode=DataSourceMode.LIVE_ONLY,
         disease=args.disease,
         device=args.device,
         output_dir=args.output_dir,

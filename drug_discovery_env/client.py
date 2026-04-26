@@ -5,8 +5,8 @@ internals so client/server separation is preserved. Use as:
 
     from drug_discovery_env.client import DrugDiscoveryClient
     env = DrugDiscoveryClient(base_url="http://localhost:8000").sync()
-    res = env.reset()
-    res = env.step(DrugDiscoveryAction(tool="select_target", params={"target": "DPP4"}))
+    res = env.reset(disease="Type 2 Diabetes")
+    res = env.step(DrugDiscoveryAction(tool="select_target", params={"disease": "Type 2 Diabetes"}))
 """
 
 from __future__ import annotations
