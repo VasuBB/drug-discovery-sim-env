@@ -9,13 +9,19 @@ from drug_discovery_env.data_provider.snapshot_utils import (
     validate_manifest,
     validate_snapshot_payloads,
 )
+from drug_discovery_env.scripts.prepare_snapshots import main as prepare_manifest_main
 
 
 class LocalSnapshotProvider(DataProvider):
     def __init__(self, local_data_dir: str) -> None:
         self.root = Path(local_data_dir)
         if (self.root / "snapshot_manifest.json").exists():
-            validate_manifest(self.root)
+            try:
+                validate_manifest(self.root)
+            except Exception:
+                # Self-heal when snapshot files changed since last manifest generation.
+                prepare_manifest_main()
+                validate_manifest(self.root)
         validate_snapshot_payloads(self.root)
 
     def _load_json(self, filename: str, default: Any) -> Any:

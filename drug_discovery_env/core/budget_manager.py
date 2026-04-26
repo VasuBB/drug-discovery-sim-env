@@ -23,14 +23,21 @@ class BudgetManager:
         )
         return base * low_info_factor * high_uncertainty_factor * topology_factor * opportunity * redundancy
 
-    def pay(self, state: GameState, tool_name: str, information_gain: float, uncertainty: float) -> float:
+    def pay(
+        self,
+        state: GameState,
+        tool_name: str,
+        information_gain: float,
+        uncertainty: float,
+        params: dict[str, object] | None = None,
+    ) -> float:
         cost = self.compute_tool_cost(tool_name, information_gain, uncertainty, state.stage)
         state.add_budget_event(reason=f"tool:{tool_name}", amount=cost)
         state.action_history.append(
             ActionRecord(
                 step=state.step,
                 tool=tool_name,
-                params={},
+                params=params or {},
                 information_gain=information_gain,
                 cost_paid=cost,
             )

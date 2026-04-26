@@ -2,18 +2,77 @@ app:
   env_name: "drug_discovery_advanced"
   max_steps: 50
   random_seed: 42
+  log_dir: "artifacts/logs"
 
 data:
-  mode: "hybrid"
+  mode: "local_only"
   local_data_dir: "drug_discovery_env/data"
   request_timeout_seconds: 6.0
   retries: 2
+  retry_backoff_seconds: 1.0
+  max_consecutive_failures: 8
   circuit_breaker_failures: 3
   cache_ttl_seconds: 3600
   user_agent: "drug-discovery-sim-env/0.1"
   pubmed_tool: "drug_discovery_rl_env"
   pubmed_email: "devnull@example.com"
   min_pubmed_token_overlap: 2
+  disease_queries:
+    - "Type 2 Diabetes"
+    - "Type 1 Diabetes"
+    - "Obesity"
+    - "Metabolic Dysfunction-Associated Steatohepatitis"
+    - "Dyslipidemia"
+    - "Atherosclerosis"
+    - "Hypertension"
+    - "Heart Failure"
+    - "Atrial Fibrillation"
+    - "Chronic Kidney Disease"
+    - "IgA Nephropathy"
+    - "Idiopathic Pulmonary Fibrosis"
+    - "Chronic Obstructive Pulmonary Disease"
+    - "Asthma"
+    - "Non-Small Cell Lung Cancer"
+    - "Small Cell Lung Cancer"
+    - "Triple Negative Breast Cancer"
+    - "HER2 Positive Breast Cancer"
+    - "Colorectal Cancer"
+    - "Pancreatic Ductal Adenocarcinoma"
+    - "Hepatocellular Carcinoma"
+    - "Prostate Cancer"
+    - "Ovarian Cancer"
+    - "Glioblastoma"
+    - "Acute Myeloid Leukemia"
+    - "Multiple Myeloma"
+    - "Melanoma"
+    - "Alzheimer Disease"
+    - "Parkinson Disease"
+    - "Amyotrophic Lateral Sclerosis"
+    - "Multiple Sclerosis"
+    - "Epilepsy"
+    - "Migraine"
+    - "Rheumatoid Arthritis"
+    - "Systemic Lupus Erythematosus"
+    - "Psoriasis"
+    - "Inflammatory Bowel Disease"
+    - "Ulcerative Colitis"
+    - "Crohn Disease"
+    - "Atopic Dermatitis"
+    - "Endometriosis"
+    - "Polycystic Ovary Syndrome"
+    - "Age-related Macular Degeneration"
+    - "Glaucoma"
+    - "Sickle Cell Disease"
+    - "Duchenne Muscular Dystrophy"
+  literature_queries:
+    - "drug discovery medicinal chemistry selectivity safety"
+    - "ADMET optimization lead compound hERG"
+    - "hit-to-lead optimization scaffold hopping"
+    - "polypharmacology off target toxicity"
+    - "target identification systems biology pathway disease"
+    - "clinical attrition translational biomarkers drug development"
+    - "structure based drug design kinase gpcr ion channel"
+    - "AI machine learning drug discovery ADMET prediction"
   endpoints:
     open_targets_url: "https://api.platform.opentargets.org/api/v4/graphql"
     chembl_url: "https://www.ebi.ac.uk/chembl/api/data"
@@ -74,6 +133,11 @@ reward:
     process: 0.20
     reasoning: 0.15
     strategy: 0.05
+  shaping:
+    potential_delta_scale: 0.25
+    novelty_pressure: 0.10
+    loop_penalty: 0.12
+    unsafe_shortcut_penalty: 0.15
   floors:
     herg_prob_max: 0.5
     pains_alert_max: 1

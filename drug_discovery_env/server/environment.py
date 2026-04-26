@@ -22,6 +22,8 @@ from drug_discovery_env.core.topology import TopologyEngine
 from drug_discovery_env.data_provider import build_data_provider
 from drug_discovery_env.retrieval.hybrid import HybridRetriever
 from drug_discovery_env.rewards.aggregator import RewardEngine
+from drug_discovery_env.rewards.rubrics import RubricRewardComposer
+from drug_discovery_env.utils.logging import get_logger, write_jsonl
 from drug_discovery_env.tools import (
     EvaluateAdmetTool,
     ModifyMoleculeTool,
@@ -40,11 +42,17 @@ class DrugDiscoveryEnv(Environment[DrugDiscoveryAction, DrugDiscoveryObservation
     def __init__(self, settings: Settings | None = None) -> None:
         super().__init__()
         self.settings = settings or get_settings()
+        self.logger = get_logger(
+            "drug_discovery_env.server",
+            log_file=f"{self.settings.app.log_dir}/server.log",
+        )
+        self.step_log_path = f"{self.settings.app.log_dir}/env_steps.jsonl"
         self.provider = build_data_provider(self.settings)
         self.topology = TopologyEngine(self.settings)
         self.stage_manager = StageManager(self.settings)
         self.budget_manager = BudgetManager(self.settings)
         self.reward_engine = RewardEngine(self.settings)
+        self.rubric_composer = RubricRewardComposer(self.settings.reward.weights)
 
         self.tools = {
             "select_target": SelectTargetTool(self.settings, self.provider),
@@ -143,7 +151,13 @@ class DrugDiscoveryEnv(Environment[DrugDiscoveryAction, DrugDiscoveryObservation
         if parsed_action.tool in {"evaluate_admet", "predict_affinity", "validate_compound"}:
             information_gain = max(information_gain, 0.6)
         uncertainty = sum(c.uncertainty for c in state.compound_ledger.values()) / max(1, len(state.compound_ledger))
-        self.budget_manager.pay(state, parsed_action.tool, information_gain, uncertainty)
+        self.budget_manager.pay(
+            state,
+            parsed_action.tool,
+            information_gain,
+            uncertainty,
+            params=parsed_action.params,
+        )
 
         state.step += 1
         self.stage_manager.update_stage(state)
@@ -153,7 +167,7 @@ class DrugDiscoveryEnv(Environment[DrugDiscoveryAction, DrugDiscoveryObservation
         done = state.step >= self.settings.app.max_steps or state.budget_remaining <= 0 or state.stage >= 5
         source, confidence = self._resolve_provenance(result) if isinstance(result, dict) else ("simulation", 0.6)
 
-        return DrugDiscoveryObservation(
+        obs = DrugDiscoveryObservation(
             state_summary=summarize_state(state),
             tool_result=result,
             provenance=ToolProvenance(
@@ -169,6 +183,28 @@ class DrugDiscoveryEnv(Environment[DrugDiscoveryAction, DrugDiscoveryObservation
             info={"stage": state.stage, "step": state.step},
             metadata={"state_stage": state.stage, "state_step": state.step},
         )
+        rubric_reward = self.rubric_composer.score(parsed_action, obs)
+        obs.reward = max(0.0, min(1.0, 0.75 * float(obs.reward) + 0.25 * rubric_reward))
+        write_jsonl(
+            self.step_log_path,
+            {
+                "step": state.step,
+                "tool": parsed_action.tool,
+                "reward_total": reward_breakdown.total,
+                "stage": state.stage,
+                "budget_remaining": state.budget_remaining,
+                "data_source": source,
+            },
+        )
+        self.logger.info(
+            "step=%s tool=%s reward=%.4f stage=%s budget=%.2f",
+            state.step,
+            parsed_action.tool,
+            reward_breakdown.total,
+            state.stage,
+            state.budget_remaining,
+        )
+        return obs
 
     @property
     def state(self) -> DrugDiscoveryState:

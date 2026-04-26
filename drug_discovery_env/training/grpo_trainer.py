@@ -22,9 +22,15 @@ def run_training_dry_run(
     *,
     data_mode: DataSourceMode = DataSourceMode.HYBRID,
     disease: str = "Type 2 Diabetes",
+    server_url: str | None = None,
 ) -> TrainingRunReport:
     cfg = training_config()
-    samples = generate_rollouts(num_episodes=num_episodes, data_mode=data_mode, disease=disease)
+    samples = generate_rollouts(
+        num_episodes=num_episodes,
+        data_mode=data_mode,
+        disease=disease,
+        server_url=server_url,
+    )
     rewards = [s.reward for s in samples]
     mean_reward = (sum(rewards) / len(rewards)) if rewards else 0.0
     return TrainingRunReport(
@@ -41,10 +47,16 @@ def _build_training_dataset(
     *,
     data_mode: DataSourceMode = DataSourceMode.HYBRID,
     disease: str = "Type 2 Diabetes",
+    server_url: str | None = None,
 ):
     from datasets import Dataset
 
-    samples = generate_rollouts(num_episodes=num_episodes, data_mode=data_mode, disease=disease)
+    samples = generate_rollouts(
+        num_episodes=num_episodes,
+        data_mode=data_mode,
+        disease=disease,
+        server_url=server_url,
+    )
     rows = [
         {
             "prompt": s.prompt,
@@ -66,6 +78,7 @@ def run_grpo_if_available(
     device: str = "auto",
     output_dir: str = "outputs/grpo",
     max_train_steps: int = 20,
+    server_url: str | None = None,
 ) -> dict[str, Any]:
     cfg = training_config()
     model_name = model_name_override or str(cfg["model"])
@@ -73,13 +86,23 @@ def run_grpo_if_available(
     try:
         import trl  # noqa: F401
     except Exception:
-        report = run_training_dry_run(num_episodes=num_episodes, data_mode=data_mode, disease=disease)
+        report = run_training_dry_run(
+            num_episodes=num_episodes,
+            data_mode=data_mode,
+            disease=disease,
+            server_url=server_url,
+        )
         out = asdict(report)
         out["status"] = "dry_run_no_trl"
         out["message"] = "TRL not installed; completed dry-run data generation instead."
         return out
 
-    dataset, samples = _build_training_dataset(num_episodes=num_episodes, data_mode=data_mode, disease=disease)
+    dataset, samples = _build_training_dataset(
+        num_episodes=num_episodes,
+        data_mode=data_mode,
+        disease=disease,
+        server_url=server_url,
+    )
     rewards = [float(x.reward) for x in samples]
     mean_reward = (sum(rewards) / len(rewards)) if rewards else 0.0
 
@@ -89,6 +112,7 @@ def run_grpo_if_available(
         "model": model_name,
         "data_mode": data_mode.value,
         "disease": disease,
+        "server_url": server_url,
         "num_samples": len(samples),
         "reward_mean": mean_reward,
         "message": "TRL detected and dataset prepared.",

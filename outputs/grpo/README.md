@@ -36,7 +36,7 @@ This model was trained with GRPO, a method introduced in [DeepSeekMath: Pushing 
 ### Framework versions
 
 - TRL: 1.2.0
-- Transformers: 5.6.2
+- Transformers: 5.5.3
 - Pytorch: 2.11.0
 - Datasets: 4.8.4
 - Tokenizers: 0.22.2

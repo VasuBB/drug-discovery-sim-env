@@ -33,6 +33,7 @@ class AppConfig(BaseModel):
     env_name: str
     max_steps: int
     random_seed: int
+    log_dir: str
 
 
 class DataConfig(BaseModel):
@@ -40,12 +41,16 @@ class DataConfig(BaseModel):
     local_data_dir: str
     request_timeout_seconds: float
     retries: int
+    retry_backoff_seconds: float
+    max_consecutive_failures: int
     circuit_breaker_failures: int
     cache_ttl_seconds: int
     user_agent: str
     pubmed_tool: str
     pubmed_email: str
     min_pubmed_token_overlap: int
+    disease_queries: list[str]
+    literature_queries: list[str]
     endpoints: EndpointConfig
 
 
@@ -83,6 +88,7 @@ class RetrievalConfig(BaseModel):
 
 class RewardConfig(BaseModel):
     weights: dict[str, float]
+    shaping: dict[str, float]
     floors: dict[str, float | int]
     terminal_components: dict[str, float]
 
@@ -109,6 +115,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="DD_",
         env_nested_delimiter="__",
+        env_file=".env",
+        env_file_encoding="utf-8",
         extra="ignore",
     )
 

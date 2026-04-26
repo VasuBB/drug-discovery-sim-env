@@ -1,16 +1,324 @@
 [
   {
     "disease": "Type 2 Diabetes",
-    "target": "INSR",
-    "target_class": "receptor_tyrosine_kinase",
-    "druggability": 0.68,
-    "confidence": 0.75
+    "target": "KCNJ11",
+    "target_class": "Inwardly rectifying potassium channel",
+    "druggability": 0.8651421397012851,
+    "confidence": 0.869085283820771
+  },
+  {
+    "disease": "Type 1 Diabetes",
+    "target": "INS",
+    "target_class": "Secreted protein",
+    "druggability": 0.6902291410699225,
+    "confidence": 0.7641374846419535
+  },
+  {
+    "disease": "Obesity",
+    "target": "MC4R",
+    "target_class": "Short peptide receptor (family A GPCR)",
+    "druggability": 0.8378006117300402,
+    "confidence": 0.8526803670380241
+  },
+  {
+    "disease": "Metabolic Dysfunction-Associated Steatohepatitis",
+    "target": "PNPLA3",
+    "target_class": "unknown",
+    "druggability": 0.4525056482949714,
+    "confidence": 0.6215033889769828
+  },
+  {
+    "disease": "Dyslipidemia",
+    "target": "LDLR",
+    "target_class": "Membrane receptor",
+    "druggability": 0.9139237618106986,
+    "confidence": 0.8983542570864191
+  },
+  {
+    "disease": "Atherosclerosis",
+    "target": "PCSK9",
+    "target_class": "Enzyme",
+    "druggability": 0.7003568835245711,
+    "confidence": 0.7702141301147427
+  },
+  {
+    "disease": "Hypertension",
+    "target": "BMPR2",
+    "target_class": "Kinase",
+    "druggability": 0.8527167458542788,
+    "confidence": 0.8616300475125672
+  },
+  {
+    "disease": "Heart Failure",
+    "target": "TTN",
+    "target_class": "Enzyme",
+    "druggability": 0.7602640168551252,
+    "confidence": 0.8061584101130751
+  },
+  {
+    "disease": "Atrial Fibrillation",
+    "target": "SCN5A",
+    "target_class": "Voltage-gated ion channel",
+    "druggability": 0.8649021319883786,
+    "confidence": 0.8689412791930271
+  },
+  {
+    "disease": "Chronic Kidney Disease",
+    "target": "ACE",
+    "target_class": "Protease",
+    "druggability": 0.7672049432455652,
+    "confidence": 0.8103229659473391
+  },
+  {
+    "disease": "IgA Nephropathy",
+    "target": "TNFSF13",
+    "target_class": "Secreted protein",
+    "druggability": 0.5756611141862813,
+    "confidence": 0.6953966685117687
+  },
+  {
+    "disease": "Idiopathic Pulmonary Fibrosis",
+    "target": "PARN",
+    "target_class": "Enzyme",
+    "druggability": 0.7901795648477856,
+    "confidence": 0.8241077389086713
+  },
+  {
+    "disease": "Chronic Obstructive Pulmonary Disease",
+    "target": "SCNN1B",
+    "target_class": "Ion channel",
+    "druggability": 0.8111798430492827,
+    "confidence": 0.8367079058295696
+  },
+  {
+    "disease": "Asthma",
+    "target": "IL4R",
+    "target_class": "Secreted protein",
+    "druggability": 0.7427493839096981,
+    "confidence": 0.7956496303458189
   },
   {
     "disease": "Non-Small Cell Lung Cancer",
     "target": "EGFR",
-    "target_class": "kinase",
-    "druggability": 0.83,
-    "confidence": 0.83
+    "target_class": "Kinase",
+    "druggability": 0.8878809855539699,
+    "confidence": 0.8827285913323819
+  },
+  {
+    "disease": "Small Cell Lung Cancer",
+    "target": "RB1",
+    "target_class": "Unclassified protein",
+    "druggability": 0.7288460927500057,
+    "confidence": 0.7873076556500034
+  },
+  {
+    "disease": "Triple Negative Breast Cancer",
+    "target": "CD274",
+    "target_class": "Unclassified protein",
+    "druggability": 0.5038990796160622,
+    "confidence": 0.6523394477696373
+  },
+  {
+    "disease": "HER2 Positive Breast Cancer",
+    "target": "ERBB2",
+    "target_class": "Kinase",
+    "druggability": 0.657686872049737,
+    "confidence": 0.7446121232298422
+  },
+  {
+    "disease": "Colorectal Cancer",
+    "target": "MSH2",
+    "target_class": "Unclassified protein",
+    "druggability": 0.9235834977717319,
+    "confidence": 0.9041500986630391
+  },
+  {
+    "disease": "Pancreatic Ductal Adenocarcinoma",
+    "target": "KRAS",
+    "target_class": "Phosphodiesterase 6D",
+    "druggability": 0.5041824261154436,
+    "confidence": 0.6525094556692661
+  },
+  {
+    "disease": "Hepatocellular Carcinoma",
+    "target": "TP53",
+    "target_class": "Other nuclear protein",
+    "druggability": 0.800110731589248,
+    "confidence": 0.8300664389535487
+  },
+  {
+    "disease": "Prostate Cancer",
+    "target": "AR",
+    "target_class": "Nuclear hormone receptor subfamily 3 group C member 4",
+    "druggability": 0.8671891101815927,
+    "confidence": 0.8703134661089555
+  },
+  {
+    "disease": "Ovarian Cancer",
+    "target": "BRCA1",
+    "target_class": "Enzyme",
+    "druggability": 0.8808546234586168,
+    "confidence": 0.87851277407517
+  },
+  {
+    "disease": "Glioblastoma",
+    "target": "MSH2",
+    "target_class": "Unclassified protein",
+    "druggability": 0.3443362470873648,
+    "confidence": 0.5566017482524188
+  },
+  {
+    "disease": "Acute Myeloid Leukemia",
+    "target": "DNMT3A",
+    "target_class": "Reader",
+    "druggability": 0.8616700974175244,
+    "confidence": 0.8670020584505146
+  },
+  {
+    "disease": "Multiple Myeloma",
+    "target": "CRBN",
+    "target_class": "Protein Kinase",
+    "druggability": 0.7061494395008595,
+    "confidence": 0.7736896637005157
+  },
+  {
+    "disease": "Melanoma",
+    "target": "CDKN2A",
+    "target_class": "Unclassified protein",
+    "druggability": 0.8800531000184248,
+    "confidence": 0.8780318600110548
+  },
+  {
+    "disease": "Alzheimer Disease",
+    "target": "APP",
+    "target_class": "Membrane receptor",
+    "druggability": 0.8696695516607333,
+    "confidence": 0.87180173099644
+  },
+  {
+    "disease": "Parkinson Disease",
+    "target": "LRRK2",
+    "target_class": "TKL protein kinase group",
+    "druggability": 0.8802210727112801,
+    "confidence": 0.878132643626768
+  },
+  {
+    "disease": "Amyotrophic Lateral Sclerosis",
+    "target": "SOD1",
+    "target_class": "Enzyme",
+    "druggability": 0.8897871079625572,
+    "confidence": 0.8838722647775343
+  },
+  {
+    "disease": "Multiple Sclerosis",
+    "target": "NR3C1",
+    "target_class": "Nuclear hormone receptor subfamily 3 group C member 1",
+    "druggability": 0.6841665837277395,
+    "confidence": 0.7604999502366436
+  },
+  {
+    "disease": "Epilepsy",
+    "target": "SCN1A",
+    "target_class": "Voltage-gated ion channel",
+    "druggability": 0.9260099607832822,
+    "confidence": 0.9056059764699693
+  },
+  {
+    "disease": "Migraine",
+    "target": "SCN1A",
+    "target_class": "Voltage-gated ion channel",
+    "druggability": 0.8676380205622415,
+    "confidence": 0.8705828123373448
+  },
+  {
+    "disease": "Rheumatoid Arthritis",
+    "target": "TYK2",
+    "target_class": "TK protein kinase group",
+    "druggability": 0.7517870740478155,
+    "confidence": 0.8010722444286893
+  },
+  {
+    "disease": "Systemic Lupus Erythematosus",
+    "target": "TREX1",
+    "target_class": "unknown",
+    "druggability": 0.7791500687851263,
+    "confidence": 0.8174900412710757
+  },
+  {
+    "disease": "Psoriasis",
+    "target": "CARD14",
+    "target_class": "unknown",
+    "druggability": 0.8441440404186832,
+    "confidence": 0.8564864242512099
+  },
+  {
+    "disease": "Inflammatory Bowel Disease",
+    "target": "NOD2",
+    "target_class": "Unclassified protein",
+    "druggability": 0.874691454984459,
+    "confidence": 0.8748148729906754
+  },
+  {
+    "disease": "Ulcerative Colitis",
+    "target": "IL12B",
+    "target_class": "Secreted protein",
+    "druggability": 0.734570044957905,
+    "confidence": 0.7907420269747429
+  },
+  {
+    "disease": "Crohn Disease",
+    "target": "NOD2",
+    "target_class": "Unclassified protein",
+    "druggability": 0.7919492792537685,
+    "confidence": 0.825169567552261
+  },
+  {
+    "disease": "Atopic Dermatitis",
+    "target": "FLG",
+    "target_class": "unknown",
+    "druggability": 0.7897905897445738,
+    "confidence": 0.8238743538467442
+  },
+  {
+    "disease": "Endometriosis",
+    "target": "ESR1",
+    "target_class": "Nuclear hormone receptor subfamily 3",
+    "druggability": 0.6702159029782866,
+    "confidence": 0.752129541786972
+  },
+  {
+    "disease": "Polycystic Ovary Syndrome",
+    "target": "ESR1",
+    "target_class": "Nuclear hormone receptor subfamily 3",
+    "druggability": 0.5733716744852002,
+    "confidence": 0.6940230046911201
+  },
+  {
+    "disease": "Age-related Macular Degeneration",
+    "target": "ABCA4",
+    "target_class": "unknown",
+    "druggability": 0.8032562566555194,
+    "confidence": 0.8319537539933115
+  },
+  {
+    "disease": "Glaucoma",
+    "target": "MYOC",
+    "target_class": "Unclassified protein",
+    "druggability": 0.9016097767694791,
+    "confidence": 0.8909658660616874
+  },
+  {
+    "disease": "Sickle Cell Disease",
+    "target": "HBB",
+    "target_class": "Secreted protein",
+    "druggability": 0.8012076594961661,
+    "confidence": 0.8307245956976996
+  },
+  {
+    "disease": "Duchenne Muscular Dystrophy",
+    "target": "DMD",
+    "target_class": "Unclassified protein",
+    "druggability": 0.865885140119287,
+    "confidence": 0.8695310840715721
   }
 ]

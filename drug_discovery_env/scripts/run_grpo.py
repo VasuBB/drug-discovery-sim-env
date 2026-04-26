@@ -21,7 +21,7 @@ def main() -> None:
         "--data-mode",
         type=_mode,
         choices=list(DataSourceMode),
-        default=DataSourceMode.HYBRID,
+        default=DataSourceMode.LOCAL_ONLY,
         help="Data source mode for rollout generation",
     )
     parser.add_argument(
@@ -32,6 +32,7 @@ def main() -> None:
     )
     parser.add_argument("--output-dir", type=str, default="outputs/grpo")
     parser.add_argument("--max-train-steps", type=int, default=20)
+    parser.add_argument("--server-url", type=str, default=None, help="Run rollouts via running OpenEnv server")
     args = parser.parse_args()
 
     result = run_grpo_if_available(
@@ -43,6 +44,7 @@ def main() -> None:
         device=args.device,
         output_dir=args.output_dir,
         max_train_steps=args.max_train_steps,
+        server_url=args.server_url,
     )
     print(json.dumps(result, indent=2))
 

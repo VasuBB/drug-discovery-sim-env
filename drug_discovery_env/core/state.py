@@ -61,6 +61,7 @@ class GameState:
     budget_ledger: list[dict[str, Any]] = field(default_factory=list)
     action_history: list[ActionRecord] = field(default_factory=list)
     sub_agent_inbox: dict[str, list[str]] = field(default_factory=dict)
+    last_potential_score: float = 0.0
 
     def add_budget_event(self, reason: str, amount: float) -> None:
         self.budget_remaining = max(0.0, self.budget_remaining - amount)

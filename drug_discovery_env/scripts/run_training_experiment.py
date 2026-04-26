@@ -2,21 +2,103 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 
-from drug_discovery_env.config.settings import DataSourceMode
+from drug_discovery_env.client import create_sync_client
+from drug_discovery_env.config.settings import DataSourceMode, get_settings
+from drug_discovery_env.core.models import DrugDiscoveryAction
 from drug_discovery_env.training.grpo_trainer import run_grpo_if_available
-from drug_discovery_env.training.rollout_generator import generate_rollouts
+from drug_discovery_env.utils.logging import get_logger, write_jsonl
 
 
-def random_baseline_reward(num_episodes: int, data_mode: DataSourceMode) -> float:
-    # simple pessimistic baseline proxy for comparison figure
-    samples = generate_rollouts(num_episodes=max(1, num_episodes // 2), data_mode=data_mode)
-    if not samples:
+def random_baseline_reward_local(num_episodes: int, data_mode: DataSourceMode) -> float:
+    from drug_discovery_env.server.environment import DrugDiscoveryEnv
+
+    settings = get_settings().model_copy(deep=True)
+    settings.data.mode = data_mode
+    env = DrugDiscoveryEnv(settings=settings)
+    tools = [
+        "select_target",
+        "search_compounds",
+        "predict_affinity",
+        "evaluate_admet",
+        "search_literature",
+        "validate_compound",
+    ]
+    rewards: list[float] = []
+    for _ in range(max(1, num_episodes)):
+        obs = env.reset()
+        done = False
+        while not done:
+            gs = getattr(env, "_game_state", None)
+            smiles = next(iter(gs.compound_ledger.keys()), None) if gs and gs.compound_ledger else None
+            tool = random.choice(tools)
+            params = {}
+            if tool in {"predict_affinity", "evaluate_admet", "validate_compound"} and smiles:
+                params = {"smiles": smiles, "assay_type": "biochemical"}
+            if tool == "select_target":
+                params = {"disease": "Type 2 Diabetes"}
+            if tool == "search_literature":
+                params = {"query": "drug discovery safety selectivity"}
+            action = f"<reasoning>random baseline action</reasoning><tool>{tool}</tool><params>{json.dumps(params)}</params>"
+            try:
+                obs = env.step(action)
+            except Exception:
+                obs = env.step("<reasoning>fallback</reasoning><tool>search_compounds</tool><params>{\"min_qed\":0.5}</params>")
+            rewards.append(float(obs.reward or 0.0))
+            done = obs.done
+    if not rewards:
         return 0.0
-    return sum(max(0.0, s.reward - 0.08) for s in samples) / len(samples)
+    return sum(rewards) / len(rewards)
+
+
+def random_baseline_reward_remote(num_episodes: int, server_url: str) -> float:
+    tools = [
+        "select_target",
+        "search_compounds",
+        "predict_affinity",
+        "evaluate_admet",
+        "search_literature",
+        "validate_compound",
+    ]
+    rewards: list[float] = []
+    for _ in range(max(1, num_episodes)):
+        with create_sync_client(server_url) as client:
+            obs = client.reset().observation
+            done = False
+            smiles: str | None = None
+            while not done:
+                tool = random.choice(tools)
+                params: dict[str, str] = {}
+                if tool in {"predict_affinity", "evaluate_admet", "validate_compound"} and smiles:
+                    params = {"smiles": smiles, "assay_type": "biochemical"}
+                if tool == "select_target":
+                    params = {"disease": "Type 2 Diabetes"}
+                if tool == "search_literature":
+                    params = {"query": "drug discovery safety selectivity"}
+                action = DrugDiscoveryAction(tool=tool, reasoning="random baseline action", params=params)
+                try:
+                    step = client.step(action)
+                except Exception:
+                    step = client.step(
+                        DrugDiscoveryAction(
+                            tool="search_compounds",
+                            reasoning="fallback",
+                            params={"min_qed": 0.5},
+                        )
+                    )
+                obs = step.observation
+                hits = (obs.tool_result or {}).get("hits", []) if isinstance(obs.tool_result, dict) else []
+                if hits and isinstance(hits[0], dict) and hits[0].get("smiles"):
+                    smiles = str(hits[0]["smiles"])
+                rewards.append(float(step.reward if step.reward is not None else (obs.reward or 0.0)))
+                done = bool(step.done)
+    if not rewards:
+        return 0.0
+    return sum(rewards) / len(rewards)
 
 
 def plot_curves(log_history: list[dict], out_dir: Path) -> dict[str, str]:
@@ -71,16 +153,22 @@ def plot_curves(log_history: list[dict], out_dir: Path) -> dict[str, str]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run train-vs-baseline experiment and save plots")
     parser.add_argument("--episodes", type=int, default=2)
-    parser.add_argument("--data-mode", choices=[m.value for m in DataSourceMode], default="live_only")
+    parser.add_argument("--data-mode", choices=[m.value for m in DataSourceMode], default="local_only")
     parser.add_argument("--device", choices=["auto", "cpu", "mps", "cuda"], default="auto")
     parser.add_argument("--model", type=str, default="Qwen/Qwen2.5-0.5B-Instruct")
     parser.add_argument("--out-dir", type=str, default="artifacts/training")
     parser.add_argument("--max-train-steps", type=int, default=10)
+    parser.add_argument("--server-url", type=str, default=None, help="Use running OpenEnv server via client")
     args = parser.parse_args()
+    logger = get_logger("drug_discovery_env.training_experiment", log_file="artifacts/logs/training_experiment.log")
 
     data_mode = DataSourceMode(args.data_mode)
 
-    baseline = random_baseline_reward(args.episodes, data_mode)
+    baseline = (
+        random_baseline_reward_remote(args.episodes, args.server_url)
+        if args.server_url
+        else random_baseline_reward_local(args.episodes, data_mode)
+    )
 
     result = run_grpo_if_available(
         enable_actual_training=True,
@@ -90,6 +178,7 @@ def main() -> None:
         device=args.device,
         output_dir=args.out_dir,
         max_train_steps=args.max_train_steps,
+        server_url=args.server_url,
     )
 
     log_history = result.get("log_history", [])
@@ -116,6 +205,13 @@ def main() -> None:
     summary_path = Path(args.out_dir) / "training_summary.json"
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    write_jsonl("artifacts/logs/training_experiment.jsonl", summary)
+    logger.info(
+        "experiment complete baseline=%.4f trained=%.4f out_dir=%s",
+        baseline,
+        trained_reward,
+        args.out_dir,
+    )
     print(json.dumps(summary, indent=2))
 
 
