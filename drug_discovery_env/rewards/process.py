@@ -1,22 +1,27 @@
-"""Process reward — per-step info-gain / cost efficiency."""
+"""Process reward — info gain per unit cost over the recent action window.
+
+Single smooth form:
+    score = mean( info_gain / (1 + log1p(cost_paid)) )    over last 5 actions
+"""
 
 from __future__ import annotations
 
+import math
+
 from drug_discovery_env.core.state import GameState
+
+_WINDOW = 5
 
 
 class ProcessReward:
     def score(self, state: GameState) -> float:
         if not state.action_history:
             return 0.0
-        recent = state.action_history[-5:]
-        mean_gain = sum(x.information_gain for x in recent) / len(recent)
-        cost_eff = sum(x.information_gain / max(1.0, x.cost_paid) for x in recent) / len(recent)
-        # promote getting past hit_id (akshat hint)
-        stage_bonus = 0.1 if state.stage in {"hit_to_lead", "admet", "lead_validation", "finished"} else 0.0
-        uncertainty_drop = 0.0
-        if state.compound_ledger:
-            uncertainty_drop = 1.0 - (
-                sum(c.uncertainty for c in state.compound_ledger.values()) / len(state.compound_ledger)
-            )
-        return max(0.0, min(1.0, 0.4 * mean_gain + 0.35 * cost_eff + 0.15 * uncertainty_drop + stage_bonus))
+        recent = state.action_history[-_WINDOW:]
+        total = 0.0
+        for record in recent:
+            cost = max(0.0, float(record.cost_paid))
+            gain = max(0.0, float(record.information_gain))
+            total += gain / (1.0 + math.log1p(cost))
+        score = total / len(recent)
+        return max(0.0, min(1.0, score))

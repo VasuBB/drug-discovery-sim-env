@@ -4,12 +4,16 @@ from datetime import datetime, timezone
 
 import pytest
 
+from drug_discovery_env.config.settings import DataSourceMode, get_settings
 from drug_discovery_env.data_provider.live_provider import LiveAPIProvider
 
 
 @pytest.fixture(autouse=True)
 def mock_live_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     timestamp = datetime.now(timezone.utc).isoformat()
+
+    settings = get_settings()
+    monkeypatch.setattr(settings.data, "mode", DataSourceMode.LIVE_ONLY)
 
     def fake_target(self: LiveAPIProvider, disease: str) -> dict[str, object]:
         return {

@@ -4,7 +4,7 @@ app:
   random_seed: 42
 
 data:
-  mode: "live_only"
+  mode: "cached_targets_live_tools"
   local_data_dir: "drug_discovery_env/data"
   request_timeout_seconds: 6.0
   retries: 2
@@ -19,6 +19,16 @@ data:
     chembl_url: "https://www.ebi.ac.uk/chembl/api/data"
     pubmed_esearch_url: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
     pubmed_efetch_url: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+
+dataset:
+  cache_path: "data/diseases.jsonl"
+  manifest_path: "data/diseases.manifest.json"
+  num_diseases: 5500
+  test_fraction: 0.10
+  min_druggability: 0.30
+  chembl_known_drugs_per_target: 10
+  page_size: 200
+  seed: 42
 
 tools:
   costs:
@@ -86,12 +96,8 @@ reward:
     herg_prob_max: 0.5
     pains_alert_max: 1
   terminal_components:
-    potency: 0.22
-    selectivity: 0.18
-    safety: 0.22
-    synthesizability: 0.12
-    novelty: 0.12
-    developability: 0.14
+    potency_weight: 1.2
+    novelty_weight: 1.0
 
 agents:
   toxicologist_alert_threshold: 0.6
@@ -99,12 +105,32 @@ agents:
   oversight_low_info_threshold: 0.4
 
 training:
-  model_name: "Qwen/Qwen2.5-3B-Instruct"
-  learning_rate: 5e-6
-  group_size: 8
-  lora_rank: 16
-  iterations: 500
-  max_completion_length: 512
+  model_name: "Qwen/Qwen2.5-0.5B-Instruct"
+  use_unsloth: true
+  load_in_4bit: true
+  group_size: 4
+  per_device_batch_size: 1
+  gradient_accumulation_steps: 8
+  max_completion_length: 384
+  max_prompt_length: 2048
+  learning_rate: 5.0e-6
+  beta: 0.04
+  epsilon: 0.20
   warmup_ratio: 0.05
-  kl_penalty_beta: 0.04
-  clip_epsilon: 0.20
+  num_train_steps: 2000
+  episodes_per_step: 1
+  log_dir: "outputs/grpo/logs"
+  output_dir: "outputs/grpo"
+  base_url: "http://localhost:8000"
+  max_turns_per_episode: 50
+  max_new_tokens_per_turn: 384
+  generation_temperature: 0.7
+  generation_top_p: 0.9
+
+evaluation:
+  output_dir: "outputs/eval"
+  episodes_per_disease: 1
+  tanimoto_top_k: 5
+  tanimoto_pass_threshold: 0.40
+  morgan_radius: 2
+  morgan_n_bits: 2048

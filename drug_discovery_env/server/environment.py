@@ -364,7 +364,13 @@ class DrugDiscoveryEnv(Environment[DrugDiscoveryAction, DrugDiscoveryObservation
             provenance=provenance,
             uncertainty={"global": self._mean_uncertainty(state)},
             reward_breakdown=reward_breakdown,
-            info={"stage": state.stage, "step": state.step, "terminated_reason": state.terminated_reason},
+            info={
+                "stage": state.stage,
+                "step": state.step,
+                "terminated_reason": state.terminated_reason,
+                "oversight_violations": state.warnings_ignored,
+                "warnings_issued": state.warnings_issued,
+            },
             metadata={"episode_id": self._episode_id},
             message=state.last_message,
         )

@@ -11,6 +11,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class DataSourceMode(str, Enum):
+    CACHED_TARGETS_LIVE_TOOLS = "cached_targets_live_tools"
     LIVE_ONLY = "live_only"
 
 
@@ -45,6 +46,17 @@ class DataConfig(BaseModel):
     pubmed_email: str
     min_pubmed_token_overlap: int
     endpoints: EndpointConfig
+
+
+class DatasetConfig(BaseModel):
+    cache_path: str
+    manifest_path: str
+    num_diseases: int
+    test_fraction: float
+    min_druggability: float
+    chembl_known_drugs_per_target: int
+    page_size: int
+    seed: int
 
 
 class ToolConfig(BaseModel):
@@ -93,14 +105,35 @@ class AgentConfig(BaseModel):
 
 class TrainingConfig(BaseModel):
     model_name: str
-    learning_rate: float
+    use_unsloth: bool
+    load_in_4bit: bool
     group_size: int
-    lora_rank: int
-    iterations: int
+    per_device_batch_size: int
+    gradient_accumulation_steps: int
     max_completion_length: int
+    max_prompt_length: int
+    learning_rate: float
+    beta: float
+    epsilon: float
     warmup_ratio: float
-    kl_penalty_beta: float
-    clip_epsilon: float
+    num_train_steps: int
+    episodes_per_step: int
+    log_dir: str
+    output_dir: str
+    base_url: str
+    max_turns_per_episode: int
+    max_new_tokens_per_turn: int
+    generation_temperature: float
+    generation_top_p: float
+
+
+class EvaluationConfig(BaseModel):
+    output_dir: str
+    episodes_per_disease: int
+    tanimoto_top_k: int
+    tanimoto_pass_threshold: float
+    morgan_radius: int
+    morgan_n_bits: int
 
 
 class Settings(BaseSettings):
@@ -112,6 +145,7 @@ class Settings(BaseSettings):
 
     app: AppConfig
     data: DataConfig
+    dataset: DatasetConfig
     tools: ToolConfig
     transitions: TransitionConfig
     budget: BudgetConfig
@@ -119,6 +153,7 @@ class Settings(BaseSettings):
     reward: RewardConfig
     agents: AgentConfig
     training: TrainingConfig
+    evaluation: EvaluationConfig
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "Settings":
@@ -127,10 +162,13 @@ class Settings(BaseSettings):
         return cls(**payload)
 
 
+def project_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
 @lru_cache(maxsize=1)
 def get_settings(config_path: str | Path | None = None) -> Settings:
-    root = Path(__file__).resolve().parents[2]
-    default_path = root / "config" / "defaults.yaml"
+    default_path = project_root() / "config" / "defaults.yaml"
     path = Path(config_path) if config_path else default_path
     return Settings.from_yaml(path)
 

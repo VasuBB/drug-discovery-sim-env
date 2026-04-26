@@ -1,48 +1,53 @@
-"""Reasoning-depth reward — continuous keyword + length scoring per trace.
+"""Reasoning-depth reward — smooth multiplicative form.
 
-Mercor bonus: reward substantive scientific reasoning per step. Combines
-domain-keyword density (60%) with trace length (40%). Also gives partial
-credit for evidence-grounded actions and tradeoff/uncertainty markers.
+    unique_concepts = |{kw in trace}|       (over a curated scientific lexicon)
+    score           = tanh(unique / 6) * tanh(mean_len / 200)
+
+The product keeps both axes (vocabulary breadth, sentence depth) honest:
+neither alone can max the score.
 """
 
 from __future__ import annotations
 
+import math
 import re
 from typing import List
 
 from drug_discovery_env.core.models import DrugDiscoveryAction
 
-
-_KEYWORDS = (
+_CONCEPTS = (
     "binding", "affinity", "admet", "toxic", "pains", "lipinski",
     "scaffold", "selectivity", "potency", "docking", "novelty",
-    "budget", "trade-off", "tradeoff", "hypothesis", "off-target",
+    "budget", "tradeoff", "trade-off", "hypothesis", "off-target",
     "modification", "candidate", "screen", "lead", "uncertainty",
-    "evidence", "ro5", "qed", "logp",
+    "evidence", "ro5", "qed", "logp", "hbd", "hba", "pIC50",
+    "metabolism", "clearance", "selectivity", "efficacy",
 )
 _TRADEOFF_RE = re.compile(r"trade[- ]?off|balance|however")
 _UNCERTAINTY_RE = re.compile(r"uncertain|confidence|risk")
-_HYPOTHESIS_RE = re.compile(r"hypothesis|expect|predict")
+_HYPOTHESIS_RE = re.compile(r"hypothes|expect|predict")
 
 
 class ReasoningReward:
     def score(self, traces: List[str]) -> float:
         if not traces:
             return 0.0
-        per_step: List[float] = []
+        depths: List[float] = []
+        lengths: List[float] = []
         for trace in traces:
             if not trace:
-                per_step.append(0.0)
+                depths.append(0.0)
+                lengths.append(0.0)
                 continue
-            length_score = min(1.0, len(trace) / 400.0)
             low = trace.lower()
-            kw_hits = sum(1 for k in _KEYWORDS if k in low)
-            kw_score = min(1.0, kw_hits / 4.0)
-            per_step.append(0.6 * kw_score + 0.4 * length_score)
-        return sum(per_step) / len(per_step)
+            unique = len({k for k in _CONCEPTS if k in low})
+            depths.append(math.tanh(unique / 6.0))
+            lengths.append(math.tanh(len(trace) / 200.0))
+        mean_depth = sum(depths) / len(depths)
+        mean_length = sum(lengths) / len(lengths)
+        return max(0.0, min(1.0, mean_depth * mean_length))
 
     def score_action(self, action: DrugDiscoveryAction) -> float:
-        """Per-action shaping bonus used during dense process reward."""
         text = (action.reasoning or "").lower()
         bits = 0.0
         if _TRADEOFF_RE.search(text):

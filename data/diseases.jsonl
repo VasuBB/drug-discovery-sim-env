@@ -1,0 +1,2 @@
+{"disease": "Type 2 Diabetes", "efo_id": "EFO_0001", "target": "INSR", "target_class": "kinase", "druggability": 0.82, "confidence": 0.9, "known_drugs": ["CCO", "CCN(CC)CC"], "split": "train"}
+{"disease": "Alzheimer disease", "efo_id": "EFO_0002", "target": "APP", "target_class": "membrane", "druggability": 0.45, "confidence": 0.65, "known_drugs": ["CC(=O)NCCC1=CC=CC=C1"], "split": "test"}

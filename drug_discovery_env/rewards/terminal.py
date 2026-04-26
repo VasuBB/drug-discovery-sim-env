@@ -1,4 +1,20 @@
-"""Terminal compound reward — weighted sum + hard hERG/PAINS safety floor."""
+"""Terminal compound reward — smooth, multiplicative form.
+
+Hard floors (hERG / PAINS) zero the score outright. Otherwise the score is a
+single product of saturating terms, so each factor contributes a smooth
+gradient that GRPO can follow:
+
+    pIC50 = -log10(affinity_nM / 1e9)            # ~3..10
+    binding   = sigmoid(potency_weight * (pIC50 - 6))
+    safety    = exp(-herg_prob)
+    admet     = 0.5 + 0.5 * ro5_pass
+    novelty   = novelty_weight * (1 / (1 + dup_count))
+    score     = binding * safety * admet * novelty
+
+`affinity_nM` and `docking_score` fall back to the multi-dim potency / safety
+fields when the raw assay readouts are absent, so the formula is robust to
+either path through the env.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +23,14 @@ from typing import List, Optional
 
 from drug_discovery_env.config.settings import Settings
 from drug_discovery_env.core.state import CompoundRecord
+
+
+def _sigmoid(x: float) -> float:
+    if x >= 0:
+        z = math.exp(-x)
+        return 1.0 / (1.0 + z)
+    z = math.exp(x)
+    return z / (1.0 + z)
 
 
 class TerminalReward:
@@ -22,46 +46,31 @@ class TerminalReward:
             return 0.0
 
         floors = self.settings.reward.floors
+        components = self.settings.reward.terminal_components
         admet = compound.admet or {}
-        herg = float(compound.metadata.get("admet", {}).get("herg_prob", 0.0))
+        herg = float(compound.metadata.get("admet", {}).get("herg_prob", admet.get("herg_prob", 0.0)))
+
         if herg > float(floors["herg_prob_max"]):
-            return 0.0  # hard safety floor — toxic compound can't win
+            return 0.0
         if admet.get("pains"):
             return 0.0
-        if admet.get("tox_flag") and herg > 0.0:
-            return 0.0
 
-        # Multi-dimensional weighted sum (akshat)
-        components = self.settings.reward.terminal_components
-        values = {
-            "potency": compound.potency,
-            "selectivity": compound.selectivity,
-            "safety": compound.safety,
-            "synthesizability": compound.synthesizability,
-            "novelty": compound.novelty,
-            "developability": compound.developability,
-        }
-        weighted = sum(float(components[k]) * max(0.0, min(1.0, values[k])) for k in components)
+        if compound.binding_affinity_nM is not None and compound.binding_affinity_nM > 0:
+            pic50 = -math.log10(max(compound.binding_affinity_nM, 1e-3) / 1e9)
+        else:
+            pic50 = 3.0 + 7.0 * max(0.0, min(1.0, compound.potency))
 
-        # Augment with main's affinity / docking / ADMET-flag credit when present
-        bonus = 0.0
-        if compound.binding_affinity_nM is not None:
-            bonus += 0.10 * max(0.0, 1.0 - math.log10(max(compound.binding_affinity_nM, 0.1)) / 4.0)
-        if compound.docking_score is not None:
-            clamped = max(-12.0, min(-4.0, compound.docking_score))
-            bonus += 0.10 * ((-clamped - 4.0) / 8.0)
-        if admet:
-            admet_term = 0.0
-            if admet.get("ro5_pass"):
-                admet_term += 0.4
-            if not admet.get("pains", False):
-                admet_term += 0.3
-            if not admet.get("tox_flag", False):
-                admet_term += 0.3
-            bonus += 0.10 * admet_term
+        potency_w = float(components.get("potency_weight", 1.2))
+        novelty_w = float(components.get("novelty_weight", 1.0))
 
-        # Novelty discount if repeated against an existing pool
-        if seen_smiles and compound.smiles in seen_smiles[:5]:
-            bonus *= 0.4
+        binding = _sigmoid(potency_w * (pic50 - 6.0))
+        safety = math.exp(-herg) * (0.5 + 0.5 * (1.0 - float(admet.get("tox_score", 0.0))))
+        ro5 = 1.0 if admet.get("ro5_pass") else 0.0
+        admet_factor = 0.5 + 0.5 * ro5
 
-        return max(0.0, min(1.0, weighted + bonus))
+        dup_count = sum(1 for s in (seen_smiles or []) if s == compound.smiles) - 1
+        dup_count = max(0, dup_count)
+        novelty = novelty_w / (1.0 + dup_count)
+
+        score = binding * safety * admet_factor * novelty
+        return max(0.0, min(1.0, score))

@@ -1,19 +1,14 @@
-"""Stage-progression reward — credit for clearing canonical stages without skipping."""
+"""Stage progression reward — fraction of canonical stages cleared.
+
+    score = cleared / 4    (4 == number of advance_stage transitions)
+"""
 
 from __future__ import annotations
 
-from typing import List
-
-CANONICAL = ("target_selection", "hit_id", "hit_to_lead", "admet", "lead_validation")
+from typing import Iterable
 
 
 class StageProgressionReward:
-    def score(self, stages_completed: List[str]) -> float:
-        cleared = 0
-        for stage in CANONICAL:
-            if stage in stages_completed:
-                cleared += 1
-            else:
-                break
-        # cap at 1.0 when all 5 cleared
-        return cleared / len(CANONICAL)
+    def score(self, stages_completed: Iterable[str]) -> float:
+        n = sum(1 for _ in stages_completed)
+        return max(0.0, min(1.0, n / 4.0))
