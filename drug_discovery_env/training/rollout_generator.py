@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Sequence
 
 from drug_discovery_env.config.settings import DataSourceMode, Settings, get_settings
 from drug_discovery_env.server.environment import DrugDiscoveryEnv
@@ -18,6 +18,17 @@ class RolloutSample:
     reward: float
     disease: str
     history: list[str]
+
+
+def normalize_diseases(
+    disease: str | None = None,
+    diseases: Sequence[str] | None = None,
+) -> list[str]:
+    normalized = [item.strip() for item in (diseases or []) if item and item.strip()]
+    if disease and disease.strip():
+        normalized.insert(0, disease.strip())
+    # Preserve order while removing duplicates.
+    return list(dict.fromkeys(normalized))
 
 
 def _json_action(
@@ -69,20 +80,23 @@ def generate_rollouts(
     *,
     settings: Optional[Settings] = None,
     data_mode: Optional[DataSourceMode] = None,
-    disease: str,
+    disease: str | None = None,
+    diseases: Sequence[str] | None = None,
 ) -> list[RolloutSample]:
     cfg = settings.model_copy(deep=True) if settings else get_settings().model_copy(deep=True)
     if data_mode is not None:
         if data_mode != DataSourceMode.LIVE_ONLY:
             raise ValueError("Only live_only data mode is supported")
         cfg.data.mode = data_mode
-    if not disease:
-        raise ValueError("disease is required for rollout generation")
+    disease_list = normalize_diseases(disease=disease, diseases=diseases)
+    if not disease_list:
+        raise ValueError("At least one disease is required for rollout generation")
 
     env = DrugDiscoveryEnv(settings=cfg)
     samples: list[RolloutSample] = []
-    for _ in range(num_episodes):
-        obs = env.reset(disease=disease)
+    for episode_index in range(num_episodes):
+        current_disease = disease_list[episode_index % len(disease_list)]
+        obs = env.reset(disease=current_disease)
         done = False
         history: list[str] = []
         while not done:
@@ -97,7 +111,7 @@ def generate_rollouts(
                     prompt=prompt,
                     completion=completion,
                     reward=reward,
-                    disease=disease,
+                    disease=current_disease,
                     history=list(history),
                 )
             )

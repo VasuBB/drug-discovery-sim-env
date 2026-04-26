@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Sequence
 
 import matplotlib.pyplot as plt
 
@@ -13,24 +14,28 @@ from drug_discovery_env.server.environment import DrugDiscoveryEnv
 from drug_discovery_env.training.grpo_trainer import run_grpo_if_available
 from drug_discovery_env.training.model_policy import TransformersToolPolicy
 from drug_discovery_env.training.policy_evaluator import evaluate_in_process
+from drug_discovery_env.training.rollout_generator import normalize_diseases
 
 
 def model_mean_reward(
     model_name_or_path: str,
     *,
-    disease: str,
+    diseases: Sequence[str],
     episodes: int,
     device: str,
 ) -> float:
-    env = DrugDiscoveryEnv()
     policy = TransformersToolPolicy(model_name_or_path, device=device)
-    metrics = evaluate_in_process(
-        env=env,
-        disease=disease,
-        episodes=episodes,
-        choose_action=policy.next_action,
-    )
-    return sum(m.total_reward for m in metrics) / len(metrics)
+    all_rewards: list[float] = []
+    for disease in diseases:
+        env = DrugDiscoveryEnv()
+        metrics = evaluate_in_process(
+            env=env,
+            disease=disease,
+            episodes=episodes,
+            choose_action=policy.next_action,
+        )
+        all_rewards.extend(m.total_reward for m in metrics)
+    return sum(all_rewards) / len(all_rewards)
 
 
 def plot_curves(log_history: list[dict], out_dir: Path) -> dict[str, str]:
@@ -81,18 +86,25 @@ def plot_curves(log_history: list[dict], out_dir: Path) -> dict[str, str]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run train-vs-baseline experiment and save plots")
     parser.add_argument("--episodes", type=int, default=2)
-    parser.add_argument("--disease", type=str, required=True)
+    parser.add_argument("--disease", type=str, default=None)
+    parser.add_argument("--diseases", type=str, default=None, help="Comma-separated disease list for mixed training")
     parser.add_argument("--eval-episodes", type=int, default=1)
     parser.add_argument("--device", choices=["auto", "cpu", "mps", "cuda"], default="auto")
     parser.add_argument("--model", type=str, default="Qwen/Qwen2.5-0.5B-Instruct")
     parser.add_argument("--out-dir", type=str, default="artifacts/training")
     parser.add_argument("--max-train-steps", type=int, default=10)
     args = parser.parse_args()
+    disease_list = normalize_diseases(
+        disease=args.disease,
+        diseases=args.diseases.split(",") if args.diseases else None,
+    )
+    if not disease_list:
+        parser.error("Provide --disease or --diseases")
 
     data_mode = DataSourceMode.LIVE_ONLY
     baseline = model_mean_reward(
         args.model,
-        disease=args.disease,
+        diseases=disease_list,
         episodes=args.eval_episodes,
         device=args.device,
     )
@@ -102,7 +114,8 @@ def main() -> None:
         model_name_override=args.model,
         num_episodes=args.episodes,
         data_mode=data_mode,
-        disease=args.disease,
+        disease=disease_list[0],
+        diseases=disease_list,
         device=args.device,
         output_dir=args.out_dir,
         max_train_steps=args.max_train_steps,
@@ -116,7 +129,7 @@ def main() -> None:
     if result.get("status") == "trl_trained":
         trained_reward = model_mean_reward(
             args.out_dir,
-            disease=args.disease,
+            diseases=disease_list,
             episodes=args.eval_episodes,
             device=args.device,
         )
@@ -134,6 +147,7 @@ def main() -> None:
     summary = {
         "base_model_mean_reward": baseline,
         "trained_mean_reward": trained_reward,
+        "diseases": disease_list,
         "trained_eval_status": trained_eval_status,
         "comparison_plot": str(compare_path),
         **paths,

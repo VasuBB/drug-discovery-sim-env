@@ -10,7 +10,7 @@ from drug_discovery_env.config.settings import DataSourceMode, Settings, get_set
 from drug_discovery_env.server.environment import DrugDiscoveryEnv
 from drug_discovery_env.training.config import training_config
 from drug_discovery_env.training.model_policy import action_from_text
-from drug_discovery_env.training.rollout_generator import generate_rollouts
+from drug_discovery_env.training.rollout_generator import generate_rollouts, normalize_diseases
 
 
 @dataclass
@@ -26,10 +26,16 @@ def run_training_dry_run(
     num_episodes: int = 3,
     *,
     data_mode: DataSourceMode = DataSourceMode.LIVE_ONLY,
-    disease: str,
+    disease: str | None = None,
+    diseases: Sequence[str] | None = None,
 ) -> TrainingRunReport:
     cfg = training_config()
-    samples = generate_rollouts(num_episodes=num_episodes, data_mode=data_mode, disease=disease)
+    samples = generate_rollouts(
+        num_episodes=num_episodes,
+        data_mode=data_mode,
+        disease=disease,
+        diseases=diseases,
+    )
     rewards = [s.reward for s in samples]
     mean_reward = (sum(rewards) / len(rewards)) if rewards else 0.0
     return TrainingRunReport(
@@ -45,11 +51,17 @@ def _build_training_dataset(
     num_episodes: int,
     *,
     data_mode: DataSourceMode = DataSourceMode.LIVE_ONLY,
-    disease: str,
+    disease: str | None = None,
+    diseases: Sequence[str] | None = None,
 ):
     from datasets import Dataset
 
-    samples = generate_rollouts(num_episodes=num_episodes, data_mode=data_mode, disease=disease)
+    samples = generate_rollouts(
+        num_episodes=num_episodes,
+        data_mode=data_mode,
+        disease=disease,
+        diseases=diseases,
+    )
     rows = [
         {
             "prompt": s.prompt,
@@ -220,7 +232,8 @@ def run_grpo_if_available(
     model_name_override: str | None = None,
     num_episodes: int = 3,
     data_mode: DataSourceMode = DataSourceMode.LIVE_ONLY,
-    disease: str,
+    disease: str | None = None,
+    diseases: Sequence[str] | None = None,
     device: str = "auto",
     output_dir: str = "outputs/grpo",
     max_train_steps: int = 20,
@@ -229,17 +242,28 @@ def run_grpo_if_available(
 ) -> Dict[str, Any]:
     cfg = training_config()
     model_name = model_name_override or str(cfg["model"])
+    disease_list = normalize_diseases(disease=disease, diseases=diseases)
+    if not disease_list:
+        raise ValueError("At least one disease is required")
 
     try:
         import trl  # noqa: F401
     except Exception:
-        report = run_training_dry_run(num_episodes=num_episodes, data_mode=data_mode, disease=disease)
+        report = run_training_dry_run(
+            num_episodes=num_episodes,
+            data_mode=data_mode,
+            diseases=disease_list,
+        )
         out = asdict(report)
         out["status"] = "dry_run_no_trl"
         out["message"] = "TRL not installed; completed dry-run data generation instead."
         return out
 
-    dataset, samples = _build_training_dataset(num_episodes=num_episodes, data_mode=data_mode, disease=disease)
+    dataset, samples = _build_training_dataset(
+        num_episodes=num_episodes,
+        data_mode=data_mode,
+        diseases=disease_list,
+    )
     rewards = [float(x.reward) for x in samples]
     mean_reward = (sum(rewards) / len(rewards)) if rewards else 0.0
 
@@ -248,7 +272,8 @@ def run_grpo_if_available(
         "config": cfg,
         "model": model_name,
         "data_mode": data_mode.value,
-        "disease": disease,
+        "disease": disease_list[0],
+        "diseases": disease_list,
         "num_samples": len(samples),
         "reward_mean": mean_reward,
         "message": "TRL detected and dataset prepared.",

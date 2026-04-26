@@ -203,6 +203,10 @@ class TransformersToolPolicy:
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_ref)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+        try:
+            self.input_device = next(self.model.parameters()).device
+        except StopIteration:
+            self.input_device = self.device
 
     def _prompt_for(self, observation: DrugDiscoveryObservation) -> str:
         messages = [
@@ -222,8 +226,7 @@ class TransformersToolPolicy:
 
         prompt = self._prompt_for(observation)
         inputs = self.tokenizer(prompt, return_tensors="pt")
-        if self.device != "cuda":
-            inputs = {key: value.to(self.device) for key, value in inputs.items()}
+        inputs = {key: value.to(self.input_device) for key, value in inputs.items()}
 
         with torch.no_grad():
             outputs = self.model.generate(
