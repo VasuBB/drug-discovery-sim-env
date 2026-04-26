@@ -42,6 +42,7 @@ You MUST reply with a single JSON object on one line, with these keys:
 Do not output anything outside the JSON object."""
 
 _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
+_JSON_OBJECT_RE = re.compile(r"\{(?:[^{}]|\{[^{}]*\})*\}", re.DOTALL)
 
 
 def render_observation(obs: DrugDiscoveryObservation | Dict[str, Any]) -> str:
@@ -115,4 +116,55 @@ def initial_user_message(disease: str) -> str:
     return (
         f"Begin a new campaign for {disease}. Stage: target_selection. "
         "Choose your first tool call."
+    )
+
+
+def plan_user_message(disease: str, max_actions: int) -> str:
+    """User message for single-turn GRPO: ask for the full campaign plan up front."""
+
+    return (
+        f"Plan a complete drug discovery campaign for {disease}. "
+        f"Output up to {max_actions} action JSON objects in execution order. "
+        "Each action must be a single JSON object on its own line, in the same "
+        "schema as a per-turn reply (keys: tool, params, target_compound_id, "
+        "reasoning). The first action must select_target. Use search_literature "
+        "early; reserve validate_compound for verified candidates. Stop emitting "
+        "actions once the campaign should advance to nomination."
+    )
+
+
+def parse_action_sequence(text: str, max_actions: int) -> list[Dict[str, Any]]:
+    """Extract an ordered list of action JSON objects from a single completion."""
+
+    if not text:
+        return []
+    actions: list[Dict[str, Any]] = []
+    for match in _JSON_OBJECT_RE.finditer(text):
+        try:
+            payload = json.loads(match.group(0))
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if "tool" not in payload:
+            continue
+        actions.append(payload)
+        if len(actions) >= max_actions:
+            break
+    return actions
+
+
+def action_from_payload(payload: Dict[str, Any]) -> DrugDiscoveryAction:
+    params = payload.get("params") or {}
+    if not isinstance(params, dict):
+        params = {}
+    evidence = payload.get("evidence_ids") or []
+    if not isinstance(evidence, list):
+        evidence = []
+    return DrugDiscoveryAction(
+        tool=str(payload.get("tool", "pause_and_review_all")),
+        params=params,
+        target_compound_id=payload.get("target_compound_id"),
+        reasoning=str(payload.get("reasoning", "")),
+        evidence_ids=[str(x) for x in evidence],
     )

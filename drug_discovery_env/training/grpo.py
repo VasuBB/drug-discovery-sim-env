@@ -1,38 +1,32 @@
-"""Live-rollout GRPO trainer.
+"""Single-turn GRPO trainer.
 
-Single training pipeline:
+Each prompt asks the LLM to plan a full drug discovery campaign for one
+disease. The completion is parsed for an ordered list of action JSON objects;
+those actions are replayed against the FastAPI env server to obtain the
+reward breakdown. Standard TRL :class:`GRPOTrainer` is used (no custom
+``rollout_func``), so the trainer is compatible with every TRL >= 0.18.
 
-  1. Build a HuggingFace dataset where each row carries one disease drawn from
-     the cached train split.
-  2. Stand up a TRL :class:`GRPOTrainer` with a custom multi-turn `rollout_func`
-     that — for each prompt produced by the trainer — runs one full env
-     campaign over HTTP against the FastAPI server and returns the
-     concatenated turn outputs + the env's terminal reward (and the full
-     reward breakdown).
-  3. Per-component reward functions (`reward_total`, `reward_terminal`,
-     `reward_stage`, `reward_budget`, `reward_reasoning`) read those fields so
-     each component is visible in TRL logs.
-
-All hyperparameters come from `settings.training` (`config/defaults.yaml`).
+All hyperparameters come from ``settings.training`` (``config/defaults.yaml``).
 """
 
 from __future__ import annotations
 
 import os
 import random
-from typing import Any, Callable, Dict, List
+import threading
+from typing import Any, Dict, List
 
 import torch
 
 from drug_discovery_env.client import DrugDiscoveryClient
 from drug_discovery_env.config.settings import Settings
 from drug_discovery_env.data_provider.dataset import DiseaseDataset
-from drug_discovery_env.training.episode_logger import EpisodeLogger
+from drug_discovery_env.training.episode_logger import EpisodeLogger, TurnRecord
 from drug_discovery_env.training.prompting import (
     SYSTEM_PROMPT,
-    action_from_text,
-    initial_user_message,
-    render_observation,
+    action_from_payload,
+    parse_action_sequence,
+    plan_user_message,
 )
 
 
@@ -44,7 +38,9 @@ def _select_device() -> str:
     return "cpu"
 
 
-def _build_prompts(dataset: DiseaseDataset, num_prompts: int, seed: int) -> List[Dict[str, Any]]:
+def _build_prompts(
+    dataset: DiseaseDataset, num_prompts: int, seed: int, max_actions: int
+) -> List[Dict[str, Any]]:
     rng = random.Random(seed)
     if not dataset.train:
         raise RuntimeError("Train split is empty; run prepare_dataset first.")
@@ -55,7 +51,10 @@ def _build_prompts(dataset: DiseaseDataset, num_prompts: int, seed: int) -> List
             {
                 "prompt": [
                     {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": initial_user_message(row.disease)},
+                    {
+                        "role": "user",
+                        "content": plan_user_message(row.disease, max_actions),
+                    },
                 ],
                 "disease": row.disease,
             }
@@ -63,166 +62,222 @@ def _build_prompts(dataset: DiseaseDataset, num_prompts: int, seed: int) -> List
     return rows
 
 
+def _completion_text(completion: Any) -> str:
+    if isinstance(completion, str):
+        return completion
+    if isinstance(completion, list) and completion:
+        last = completion[-1]
+        if isinstance(last, dict):
+            return str(last.get("content", ""))
+        return str(last)
+    if isinstance(completion, dict):
+        return str(completion.get("content", ""))
+    return str(completion or "")
+
+
+class _EpisodePlayer:
+    """Replay an LLM-produced action sequence against the env once and cache the result.
+
+    ``play(disease, completion_text)`` is idempotent per (disease, completion);
+    we memoize so the five per-component reward functions don't each spin up
+    a fresh HTTP campaign.
+    """
+
+    def __init__(self, base_url: str, logger: EpisodeLogger, max_turns: int) -> None:
+        self.base_url = base_url
+        self.logger = logger
+        self.max_turns = max_turns
+        self._cache: Dict[str, Dict[str, float]] = {}
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _key(disease: str, completion: str) -> str:
+        return f"{disease}\u0001{hash(completion)}"
+
+    def play(self, disease: str, completion: str) -> Dict[str, float]:
+        key = self._key(disease, completion)
+        with self._lock:
+            cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+
+        actions = parse_action_sequence(completion, self.max_turns)
+        episode_id = self.logger.start_episode(disease=disease)
+        breakdown: Dict[str, float] = {}
+        observation = None
+        terminated_reason = ""
+        done = False
+
+        with DrugDiscoveryClient(base_url=self.base_url).sync() as env:
+            try:
+                step_result = env.reset(disease=disease)
+            except Exception as exc:
+                result = self._zero_breakdown()
+                with self._lock:
+                    self._cache[key] = result
+                self.logger.end_episode(
+                    episode_id,
+                    disease=disease,
+                    steps=0,
+                    terminal_reward=0.0,
+                    total_reward=0.0,
+                    stage_completed=False,
+                    budget_remaining_frac=0.0,
+                    oversight_violations=0,
+                    terminated_reason=f"reset_failed: {exc}",
+                )
+                return result
+
+            observation = step_result.observation
+            for turn_idx, payload in enumerate(actions, start=1):
+                if step_result.done or turn_idx > self.max_turns:
+                    break
+                try:
+                    action = action_from_payload(payload)
+                    step_result = env.step(action)
+                except Exception:
+                    continue
+                observation = step_result.observation
+                if observation.reward_breakdown is not None:
+                    breakdown = observation.reward_breakdown.model_dump()
+
+                self.logger.log_turn(
+                    episode_id,
+                    TurnRecord(
+                        step=int(getattr(observation, "step_index", turn_idx) or turn_idx),
+                        stage=str(getattr(observation, "stage", "") or ""),
+                        tool=str(payload.get("tool", "")),
+                        params=dict(payload.get("params") or {}),
+                        target_compound_id=payload.get("target_compound_id"),
+                        reasoning=str(payload.get("reasoning", "")),
+                        evidence_ids=[str(x) for x in (payload.get("evidence_ids") or [])],
+                        model_raw_output=completion if turn_idx == 1 else "",
+                        rendered_observation="",
+                        tool_result=dict(getattr(observation, "last_result", {}) or {}),
+                        subagent_messages=list(
+                            getattr(observation, "subagent_messages", []) or []
+                        ),
+                        reward_breakdown=dict(breakdown),
+                        budget_remaining=float(
+                            getattr(observation, "budget_remaining", 0.0) or 0.0
+                        ),
+                        budget_total=float(
+                            getattr(observation, "budget_total", 0.0) or 0.0
+                        ),
+                        last_tool_cost=float(
+                            getattr(observation, "last_tool_cost", 0.0) or 0.0
+                        ),
+                        done=bool(step_result.done),
+                        reward=float(step_result.reward or 0.0),
+                    ),
+                )
+
+                done = bool(step_result.done)
+                if done:
+                    terminated_reason = str(
+                        (observation.info or {}).get("terminated_reason") or ""
+                    )
+                    break
+
+        terminal = float(breakdown.get("terminal_compound", 0.0))
+        total = float(breakdown.get("total", 0.0))
+        budget_total = float(getattr(observation, "budget_total", 0.0) or 0.0)
+        budget_remaining = float(getattr(observation, "budget_remaining", 0.0) or 0.0)
+        budget_frac = budget_remaining / budget_total if budget_total > 0 else 0.0
+        stage = getattr(observation, "stage", "")
+        stage_completed = stage in {"finished", "lead_validation"}
+        oversight_violations = int(
+            (getattr(observation, "info", {}) or {}).get("oversight_violations", 0) or 0
+        )
+        steps = int(getattr(observation, "step_index", 0) or 0)
+
+        self.logger.end_episode(
+            episode_id,
+            disease=disease,
+            steps=steps,
+            terminal_reward=terminal,
+            total_reward=total,
+            stage_completed=stage_completed,
+            budget_remaining_frac=budget_frac,
+            oversight_violations=oversight_violations,
+            terminated_reason=terminated_reason
+            or ("done" if done else f"plan_exhausted ({len(actions)} actions)"),
+        )
+
+        result = {
+            "total": total,
+            "terminal_compound": terminal,
+            "stage_progression": float(breakdown.get("stage_progression", 0.0)),
+            "budget_efficiency": float(breakdown.get("budget_efficiency", 0.0)),
+            "reasoning_depth": float(breakdown.get("reasoning_depth", 0.0)),
+            "process": float(breakdown.get("process", 0.0)),
+            "strategy": float(breakdown.get("strategy", 0.0)),
+            "oversight_penalty": float(breakdown.get("oversight_penalty", 0.0)),
+        }
+        with self._lock:
+            self._cache[key] = result
+        return result
+
+    @staticmethod
+    def _zero_breakdown() -> Dict[str, float]:
+        return {
+            "total": 0.0,
+            "terminal_compound": 0.0,
+            "stage_progression": 0.0,
+            "budget_efficiency": 0.0,
+            "reasoning_depth": 0.0,
+            "process": 0.0,
+            "strategy": 0.0,
+            "oversight_penalty": 0.0,
+        }
+
+
+def _resolve_diseases(disease, prompts, n: int) -> List[str]:
+    if isinstance(disease, list) and disease:
+        return [str(d) for d in disease]
+    if isinstance(disease, str):
+        return [disease] * n
+    if isinstance(prompts, list):
+        return [_disease_from_prompt(p) for p in prompts]
+    return [""] * n
+
+
 def _disease_from_prompt(prompt: Any) -> str:
     if isinstance(prompt, list):
         for msg in prompt:
             content = msg.get("content", "") if isinstance(msg, dict) else ""
-            if "Begin a new campaign for " in content:
-                tail = content.split("Begin a new campaign for ", 1)[1]
+            if "Plan a complete drug discovery campaign for " in content:
+                tail = content.split(
+                    "Plan a complete drug discovery campaign for ", 1
+                )[1]
                 return tail.split(".", 1)[0].strip()
     return ""
 
 
-def _generate_text(
-    trainer,
-    messages: List[Dict[str, Any]],
-    *,
-    max_new_tokens: int,
-    temperature: float,
-    top_p: float,
-    max_prompt_length: int,
-) -> str:
-    """Run one chat-style generation step using the trainer's live model.
+def _make_reward_funcs(player: _EpisodePlayer):
+    def _scored(completions, prompts=None, disease=None, **_kwargs) -> List[Dict[str, float]]:
+        diseases = _resolve_diseases(disease, prompts, len(completions))
+        out: List[Dict[str, float]] = []
+        for d, comp in zip(diseases, completions):
+            out.append(player.play(d or "Type 2 Diabetes", _completion_text(comp)))
+        return out
 
-    We avoid TRL's private ``generate_rollout_completions`` helper because it
-    moves around between releases. ``trainer.model`` + ``trainer.processing_class``
-    are part of TRL's public surface and stable across versions.
-    """
+    def reward_total(completions, prompts=None, disease=None, **kwargs):
+        return [r["total"] for r in _scored(completions, prompts, disease, **kwargs)]
 
-    tokenizer = trainer.processing_class
-    prompt_text = tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
-    encoded = tokenizer(
-        prompt_text,
-        return_tensors="pt",
-        truncation=True,
-        max_length=max_prompt_length,
-    )
-    device = next(trainer.model.parameters()).device
-    encoded = {k: v.to(device) for k, v in encoded.items()}
-    pad_id = tokenizer.pad_token_id
-    if pad_id is None:
-        pad_id = tokenizer.eos_token_id
-    with torch.no_grad():
-        out = trainer.model.generate(
-            **encoded,
-            max_new_tokens=max_new_tokens,
-            do_sample=temperature > 0.0,
-            temperature=max(temperature, 1e-5),
-            top_p=top_p,
-            pad_token_id=pad_id,
-        )
-    new_tokens = out[0, encoded["input_ids"].shape[1]:]
-    return tokenizer.decode(new_tokens, skip_special_tokens=True)
+    def reward_terminal(completions, prompts=None, disease=None, **kwargs):
+        return [r["terminal_compound"] for r in _scored(completions, prompts, disease, **kwargs)]
 
+    def reward_stage(completions, prompts=None, disease=None, **kwargs):
+        return [r["stage_progression"] for r in _scored(completions, prompts, disease, **kwargs)]
 
-def _make_rollout_func(
-    base_url: str,
-    logger: EpisodeLogger,
-    max_turns: int,
-    max_new_tokens: int,
-    temperature: float,
-    top_p: float,
-    max_prompt_length: int,
-) -> Callable[..., List[Dict[str, Any]]]:
-    def rollout(trainer, prompts, **kwargs):  # noqa: ARG001
-        results: List[Dict[str, Any]] = []
-        for prompt in prompts:
-            disease = _disease_from_prompt(prompt) or "Type 2 Diabetes"
-            episode_id = logger.start_episode(disease=disease)
-            completions: List[str] = []
-            with DrugDiscoveryClient(base_url=base_url).sync() as env:
-                step_result = env.reset(disease=disease)
-                observation = step_result.observation
-                turn = 0
-                breakdown: Dict[str, float] = {}
-                done = False
-                terminated_reason = ""
-                while not step_result.done and turn < max_turns:
-                    turn += 1
-                    user_msg = render_observation(observation)
-                    messages = list(prompt) + [{"role": "user", "content": user_msg}]
-                    text = _generate_text(
-                        trainer,
-                        messages,
-                        max_new_tokens=max_new_tokens,
-                        temperature=temperature,
-                        top_p=top_p,
-                        max_prompt_length=max_prompt_length,
-                    )
-                    completions.append(text)
-                    action = action_from_text(text)
-                    step_result = env.step(action)
-                    observation = step_result.observation
-                    done = bool(step_result.done)
-                    if observation.reward_breakdown is not None:
-                        breakdown = observation.reward_breakdown.model_dump()
-                    if done:
-                        terminated_reason = str(
-                            (observation.info or {}).get("terminated_reason") or ""
-                        )
-                        break
+    def reward_budget(completions, prompts=None, disease=None, **kwargs):
+        return [r["budget_efficiency"] for r in _scored(completions, prompts, disease, **kwargs)]
 
-                terminal = float(breakdown.get("terminal_compound", 0.0))
-                total = float(breakdown.get("total", float(step_result.reward or 0.0)))
-                budget_total = float(observation.budget_total or 0.0)
-                budget_frac = (
-                    float(observation.budget_remaining) / budget_total if budget_total > 0 else 0.0
-                )
-                stage_completed = observation.stage in {"finished", "lead_validation"}
-                oversight_violations = int(
-                    (observation.info or {}).get("oversight_violations", 0) or 0
-                )
+    def reward_reasoning(completions, prompts=None, disease=None, **kwargs):
+        return [r["reasoning_depth"] for r in _scored(completions, prompts, disease, **kwargs)]
 
-                logger.end_episode(
-                    episode_id,
-                    disease=disease,
-                    steps=observation.step_index,
-                    terminal_reward=terminal,
-                    total_reward=total,
-                    stage_completed=stage_completed,
-                    budget_remaining_frac=budget_frac,
-                    oversight_violations=oversight_violations,
-                    terminated_reason=terminated_reason or ("done" if done else "max_turns"),
-                )
-
-                results.append(
-                    {
-                        "completion": "\n---\n".join(completions),
-                        "reward": total,
-                        "terminal_compound": terminal,
-                        "stage_progression": float(breakdown.get("stage_progression", 0.0)),
-                        "budget_efficiency": float(breakdown.get("budget_efficiency", 0.0)),
-                        "reasoning_depth": float(breakdown.get("reasoning_depth", 0.0)),
-                        "process": float(breakdown.get("process", 0.0)),
-                        "strategy": float(breakdown.get("strategy", 0.0)),
-                        "oversight_penalty": float(breakdown.get("oversight_penalty", 0.0)),
-                    }
-                )
-        return results
-
-    return rollout
-
-
-def reward_total(completions, **kwargs):  # noqa: ARG001
-    return [float(c.get("reward", 0.0)) for c in completions]
-
-
-def reward_terminal(completions, **kwargs):  # noqa: ARG001
-    return [float(c.get("terminal_compound", 0.0)) for c in completions]
-
-
-def reward_stage(completions, **kwargs):  # noqa: ARG001
-    return [float(c.get("stage_progression", 0.0)) for c in completions]
-
-
-def reward_budget(completions, **kwargs):  # noqa: ARG001
-    return [float(c.get("budget_efficiency", 0.0)) for c in completions]
-
-
-def reward_reasoning(completions, **kwargs):  # noqa: ARG001
-    return [float(c.get("reasoning_depth", 0.0)) for c in completions]
+    return [reward_total, reward_terminal, reward_stage, reward_budget, reward_reasoning]
 
 
 def _load_model_and_tokenizer(settings: Settings):
@@ -273,18 +328,15 @@ def train(settings: Settings, dataset: DiseaseDataset, *, run_id: str | None = N
         dataset,
         num_prompts=max(cfg.num_train_steps * cfg.episodes_per_step * cfg.group_size, 16),
         seed=settings.dataset.seed,
+        max_actions=cfg.max_turns_per_episode,
     )
     hf_dataset = Dataset.from_list(rows)
 
     model, tokenizer = _load_model_and_tokenizer(settings)
-    rollout_func = _make_rollout_func(
+    player = _EpisodePlayer(
         base_url=cfg.base_url,
         logger=logger,
         max_turns=cfg.max_turns_per_episode,
-        max_new_tokens=cfg.max_new_tokens_per_turn,
-        temperature=float(cfg.generation_temperature),
-        top_p=float(cfg.generation_top_p),
-        max_prompt_length=cfg.max_prompt_length,
     )
 
     bf16_supported = bool(
@@ -310,19 +362,14 @@ def train(settings: Settings, dataset: DiseaseDataset, *, run_id: str | None = N
         report_to=[],
         bf16=bf16_supported,
         fp16=fp16_supported,
+        temperature=float(cfg.generation_temperature),
+        top_p=float(cfg.generation_top_p),
     )
 
     trainer = GRPOTrainer(
         model=model,
         processing_class=tokenizer,
-        reward_funcs=[
-            reward_total,
-            reward_terminal,
-            reward_stage,
-            reward_budget,
-            reward_reasoning,
-        ],
-        rollout_func=rollout_func,
+        reward_funcs=_make_reward_funcs(player),
         train_dataset=hf_dataset,
         args=grpo_cfg,
     )
