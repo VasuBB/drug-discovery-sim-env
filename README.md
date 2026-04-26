@@ -24,14 +24,15 @@ short_description: Multi-disease drug discovery RL environment (OpenEnv + GRPO)
 
 | Resource | URL |
 |---|---|
-| 🤗 **Live env on Hugging Face Space** | `https://huggingface.co/spaces/<YOUR_HF_USERNAME>/drug-discovery-sim-env` |
+| 🤗 **Live env on Hugging Face Space** | <https://huggingface.co/spaces/vasuboda/drug-discovery-sim-env> |
+| 🌐 **Live env runtime endpoint** | <https://vasuboda-drug-discovery-sim-env.hf.space> |
+| ✍️ **Blog post (writeup)** | <https://huggingface.co/spaces/vasuboda/drug-discovery-sim-env/blob/main/blog.md> |
 | 📓 **Reproducible Kaggle notebook (end-to-end)** | `https://www.kaggle.com/code/<YOUR_KAGGLE_USERNAME>/drug-discovery-grpo` |
 | 🎥 **Video walkthrough (<2 min)** | `https://youtu.be/<YOUR_VIDEO_ID>` |
-| ✍️ **Hugging Face blog post** | `https://huggingface.co/blog/<YOUR_HF_USERNAME>/drug-discovery-grpo` |
-| 💻 **GitHub source** | `https://github.com/<YOUR_GH_USERNAME>/drug-discovery-sim-env` |
 
-> Replace the `<YOUR_*>` placeholders before submitting. The HF Space link is
-> **required** by the hackathon rules; the rest are recommended.
+> The HF Space link and the live runtime endpoint above are the canonical
+> references for the hackathon submission. Health-check the runtime with
+> `curl https://vasuboda-drug-discovery-sim-env.hf.space/health`.
 
 ### How a judge can re-run everything
 
@@ -186,15 +187,15 @@ To deploy the Space yourself:
 
 ```bash
 huggingface-cli login                     # paste a write token
-git remote add hf https://huggingface.co/spaces/<YOUR_HF_USERNAME>/drug-discovery-sim-env
+git remote add hf https://huggingface.co/spaces/vasuboda/drug-discovery-sim-env
 git push hf main
 ```
 
 Once the build turns green, judges can hit:
 
 ```
-https://<YOUR_HF_USERNAME>-drug-discovery-sim-env.hf.space/health
-https://<YOUR_HF_USERNAME>-drug-discovery-sim-env.hf.space/reset
+https://vasuboda-drug-discovery-sim-env.hf.space/health
+https://vasuboda-drug-discovery-sim-env.hf.space/reset
 ```
 
 ## 🧪 Tests
