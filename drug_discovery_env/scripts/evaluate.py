@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -111,7 +112,21 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not test_rows:
         raise RuntimeError("Test split is empty; re-run prepare_dataset.")
 
-    print(f"[evaluate] checkpoint={args.checkpoint}  test_diseases={len(test_rows)}")
+    sys.stdout.reconfigure(line_buffering=True)  # ensure live progress on Kaggle/Colab
+
+    print("=" * 78, flush=True)
+    print(
+        f"[evaluate] checkpoint   : {args.checkpoint}\n"
+        f"[evaluate] base_url     : {base_url}\n"
+        f"[evaluate] test diseases: {len(test_rows)}"
+        f"  (limit={args.limit if args.limit is not None else 'none'})\n"
+        f"[evaluate] max turns/ep : {settings.training.max_turns_per_episode}\n"
+        f"[evaluate] morgan       : radius={eval_cfg.morgan_radius} n_bits={eval_cfg.morgan_n_bits}",
+        flush=True,
+    )
+    print("=" * 78, flush=True)
+
+    t_load = time.time()
     policy = TransformersToolPolicy(
         args.checkpoint,
         device=args.device,
@@ -119,30 +134,67 @@ def main(argv: Optional[List[str]] = None) -> int:
         temperature=settings.training.generation_temperature,
         top_p=settings.training.generation_top_p,
     )
+    print(f"[evaluate] policy loaded in {time.time() - t_load:.1f}s", flush=True)
 
     log_dir = resolve_path(eval_cfg.output_dir) / "logs"
     logger = EpisodeLogger(log_dir, run_id=args.run_id)
     reasoning_scorer = ReasoningReward()
 
     records: List[DiseaseMetricRecord] = []
+    sum_terminal = 0.0
+    sum_total = 0.0
+    sum_tan_max = 0.0
+    n_admet_pass = 0
+    n_stage_complete = 0
+    t_run_start = time.time()
+
     for idx, row in enumerate(test_rows, start=1):
-        print(f"[evaluate] ({idx}/{len(test_rows)}) {row.disease}  target={row.target}")
-        record = _evaluate_disease(
-            row=row,
-            policy=policy,
-            base_url=base_url,
-            logger=logger,
-            max_turns=settings.training.max_turns_per_episode,
-            radius=eval_cfg.morgan_radius,
-            n_bits=eval_cfg.morgan_n_bits,
-            pass_threshold=eval_cfg.tanimoto_pass_threshold,
-            reasoning_scorer=reasoning_scorer,
-        )
-        records.append(record)
+        t0 = time.time()
+        pct = 100.0 * (idx - 1) / max(1, len(test_rows))
         print(
-            f"  terminal={record.terminal_reward:.3f}  total={record.total_reward:.3f}"
+            f"\n[evaluate] [{idx:>3}/{len(test_rows)}  {pct:5.1f}%]"
+            f"  disease={row.disease!r}  target={row.target}",
+            flush=True,
+        )
+        try:
+            record = _evaluate_disease(
+                row=row,
+                policy=policy,
+                base_url=base_url,
+                logger=logger,
+                max_turns=settings.training.max_turns_per_episode,
+                radius=eval_cfg.morgan_radius,
+                n_bits=eval_cfg.morgan_n_bits,
+                pass_threshold=eval_cfg.tanimoto_pass_threshold,
+                reasoning_scorer=reasoning_scorer,
+            )
+        except Exception as exc:  # don't let one disease kill the whole eval
+            print(f"  [error] {type(exc).__name__}: {exc}", flush=True)
+            continue
+
+        records.append(record)
+        sum_terminal += record.terminal_reward
+        sum_total += record.total_reward
+        sum_tan_max += record.tanimoto_to_known_max
+        n_admet_pass += int(record.admet_pass)
+        n_stage_complete += int(record.stage_completed)
+        n = len(records)
+        elapsed = time.time() - t0
+        run_elapsed = time.time() - t_run_start
+        eta = (run_elapsed / idx) * (len(test_rows) - idx)
+
+        print(
+            f"  this:    terminal={record.terminal_reward:+.3f}"
+            f"  total={record.total_reward:+.3f}"
             f"  tanimoto_max={record.tanimoto_to_known_max:.3f}"
-            f"  admet_pass={record.admet_pass}  stage={record.final_stage_idx}"
+            f"  admet={'PASS' if record.admet_pass else 'fail'}"
+            f"  stage={record.final_stage_idx}/{len(STAGE_ORDER)-1}"
+            f"  steps={record.steps}  reason={record.terminated_reason or 'plan_end'}\n"
+            f"  running: terminal={sum_terminal/n:+.3f}  total={sum_total/n:+.3f}"
+            f"  tanimoto_max={sum_tan_max/n:.3f}"
+            f"  admet_pass={n_admet_pass}/{n}  stage_complete={n_stage_complete}/{n}\n"
+            f"  timing:  this={elapsed:.1f}s  total={run_elapsed:.1f}s  eta={eta:.0f}s",
+            flush=True,
         )
 
     out_dir = resolve_path(eval_cfg.output_dir)
@@ -151,8 +203,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     report = aggregate_report(records, per_disease_path)
     report_path = out_dir / "report.json"
     report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print(f"[evaluate] wrote {per_disease_path} and {report_path}")
-    print(json.dumps(report, indent=2))
+    print("\n" + "=" * 78, flush=True)
+    print(f"[evaluate] DONE  evaluated={len(records)}/{len(test_rows)}"
+          f"  total_time={time.time() - t_run_start:.1f}s", flush=True)
+    print(f"[evaluate] wrote {per_disease_path}", flush=True)
+    print(f"[evaluate] wrote {report_path}", flush=True)
+    print("=" * 78, flush=True)
+    print(json.dumps(report, indent=2), flush=True)
     return 0
 
 

@@ -1,0 +1,33 @@
+.git
+.github
+.venv
+.venv*/
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.ipynb_checkpoints
+
+# Big artefacts — never bake these into the image.
+outputs/
+wandb/
+*.bin
+*.safetensors
+*.pt
+*.ckpt
+*.zip
+*.tar.gz
+
+# Notebooks aren't needed at runtime.
+notebooks/
+
+# Tests aren't needed at runtime.
+tests/
+
+# Local secrets.
+.env
+.env.*
