@@ -287,6 +287,11 @@ def train(settings: Settings, dataset: DiseaseDataset, *, run_id: str | None = N
         max_prompt_length=cfg.max_prompt_length,
     )
 
+    bf16_supported = bool(
+        torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+    )
+    fp16_supported = torch.cuda.is_available() and not bf16_supported
+
     grpo_cfg = GRPOConfig(
         output_dir=cfg.output_dir,
         learning_rate=float(cfg.learning_rate),
@@ -303,6 +308,8 @@ def train(settings: Settings, dataset: DiseaseDataset, *, run_id: str | None = N
         logging_steps=1,
         save_steps=max(50, int(cfg.num_train_steps) // 10 or 50),
         report_to=[],
+        bf16=bf16_supported,
+        fp16=fp16_supported,
     )
 
     trainer = GRPOTrainer(
