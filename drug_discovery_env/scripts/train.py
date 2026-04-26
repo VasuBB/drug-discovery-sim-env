@@ -32,6 +32,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--num-train-steps", type=int, default=None)
     parser.add_argument("--group-size", type=int, default=None)
     parser.add_argument("--run-id", type=str, default=None)
+    parser.add_argument(
+        "--cache-path",
+        type=str,
+        default=None,
+        help="Override settings.dataset.cache_path (useful on Kaggle/Colab)",
+    )
     args = parser.parse_args(argv)
 
     settings = load_settings(args.config)
@@ -47,13 +53,21 @@ def main(argv: Optional[List[str]] = None) -> int:
         settings.training.num_train_steps = args.num_train_steps
     if args.group_size is not None:
         settings.training.group_size = args.group_size
+    if args.cache_path:
+        settings.dataset.cache_path = args.cache_path
 
-    dataset = load_dataset(settings.dataset.cache_path)
+    dataset = load_dataset(settings.dataset.cache_path, verbose=True)
     print(
         f"[train] base_url={settings.training.base_url}  model={settings.training.model_name}\n"
         f"        train_diseases={dataset.n_train}  test_diseases={dataset.n_test}\n"
         f"        steps={settings.training.num_train_steps}  group={settings.training.group_size}"
     )
+    if dataset.n_train < 4:
+        raise SystemExit(
+            f"[train] train split has only {dataset.n_train} disease(s); "
+            "rerun prepare_dataset with a larger --num-diseases (cache file: "
+            f"{settings.dataset.cache_path})."
+        )
     output_dir = train(settings, dataset, run_id=args.run_id)
     print(f"[train] checkpoint saved to {output_dir}")
     return 0

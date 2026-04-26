@@ -53,9 +53,15 @@ def _key_disease(name: str) -> str:
     return name.strip().lower()
 
 
-def load_dataset(path: str | Path) -> DiseaseDataset:
+def load_dataset(path: str | Path, *, verbose: bool = False) -> DiseaseDataset:
     resolved = resolve_path(path)
     cache_key = str(resolved)
+    if verbose:
+        try:
+            size = resolved.stat().st_size if resolved.exists() else 0
+        except OSError:
+            size = 0
+        print(f"[dataset] reading {resolved} ({size} bytes)")
     with _CACHE_LOCK:
         if cache_key in _CACHE:
             return _CACHE[cache_key]
